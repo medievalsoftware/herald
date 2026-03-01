@@ -21,6 +21,7 @@ type inputModel struct {
 	textarea textarea.Model
 	style    lipgloss.Style
 	mode     inputMode
+	nick     string // shown as prompt when unfocused
 }
 
 func newInput() inputModel {
@@ -36,7 +37,7 @@ func newInput() inputModel {
 
 	return inputModel{
 		textarea: ta,
-		style:    lipgloss.NewStyle().BorderTop(true).BorderStyle(lipgloss.NormalBorder()),
+		style:    lipgloss.NewStyle().BorderTop(true).BorderStyle(lipgloss.NormalBorder()).PaddingLeft(1),
 	}
 }
 
@@ -61,12 +62,14 @@ func (m *inputModel) syncHeight() {
 
 // SetWidth updates the textarea width so wrapping is correct during Update.
 func (m *inputModel) SetWidth(width int) {
-	m.textarea.SetWidth(width)
+	m.textarea.SetWidth(width - 1) // account for left padding
 }
+
+var inputNickStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 
 func (m inputModel) View(width int) string {
 	if !m.textarea.Focused() {
-		return m.style.Width(width).Render("")
+		return m.style.Width(width).Render(inputNickStyle.Render(m.nick))
 	}
 	return m.style.Width(width).Render(m.textarea.View())
 }

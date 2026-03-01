@@ -7,14 +7,21 @@ import (
 )
 
 type channelsModel struct {
-	tabs   []string
-	active int
+	tabs    []string
+	display map[string]string // optional display overrides
+	active  int
 }
 
 func newChannels() channelsModel {
 	return channelsModel{
-		tabs: []string{"*server*"},
+		tabs:    []string{serverBuffer},
+		display: make(map[string]string),
 	}
+}
+
+// SetDisplay sets a display name override for a tab key.
+func (m *channelsModel) SetDisplay(key, display string) {
+	m.display[key] = display
 }
 
 // Add appends a channel tab if it doesn't already exist. Returns the index.
@@ -88,10 +95,14 @@ var (
 func (m channelsModel) View(width int) string {
 	var parts []string
 	for i, tab := range m.tabs {
+		label := tab
+		if d, ok := m.display[tab]; ok {
+			label = d
+		}
 		if i == m.active {
-			parts = append(parts, channelActiveStyle.Render(tab))
+			parts = append(parts, channelActiveStyle.Render(label))
 		} else {
-			parts = append(parts, channelInactiveStyle.Render(tab))
+			parts = append(parts, channelInactiveStyle.Render(label))
 		}
 	}
 

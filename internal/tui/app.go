@@ -32,7 +32,6 @@ type model struct {
 	channels channelsModel
 	chat     chatModel
 	input    inputModel
-	status   statusModel
 	users    usersModel
 	palette  paletteModel
 	keymap   KeyMap
@@ -65,15 +64,13 @@ func New(addr, nick, pass string, cfg config.Config) *model {
 		channels:    newChannels(),
 		chat:        newChat(cfg.Timestamp),
 		input:       newInput(),
-		status:      newStatus(),
 		users:       newUsers(cfg.UsersWidth),
 		palette:     newPalette(),
 		keymap:      km,
 		namesBuffer: make(map[string][]string),
 		batches:     make(map[string]*batchState),
 	}
-	m.status.server = addr
-	m.status.nick = nick
+	m.input.nick = nick
 	m.chat.SetActive(serverBuffer)
 	return m
 }
@@ -144,8 +141,7 @@ func (m *model) View() string {
 	}
 
 	result := m.channels.View(m.width) + "\n" +
-		middle + "\n" +
-		m.status.View(m.width) + "\n"
+		middle + "\n"
 	if pv := m.palette.View(m.width); pv != "" {
 		result += pv + "\n"
 	}
@@ -176,7 +172,7 @@ func (m *model) showUsers() bool {
 func (m *model) switchChannel(name string) {
 	m.chat.SetActive(name)
 	m.users.SetActive(name)
-	m.status.users = m.users.Count()
+
 	m.resize()
 }
 
@@ -839,7 +835,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			joinContent := nick + " has joined " + channel
 			m.chat.AddSystemMessage(channel, joinContent)
 		}
-		m.status.users = m.users.Count()
+	
 
 	case "PART":
 		if len(msg.Params) < 1 {
@@ -860,7 +856,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			partContent := nick + " has left " + channel + reason
 			m.chat.AddSystemMessage(channel, partContent)
 		}
-		m.status.users = m.users.Count()
+	
 
 	case "QUIT":
 		nick := parseNick(msg.Nick())
@@ -879,7 +875,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.users.RemoveMemberAll(nick)
-		m.status.users = m.users.Count()
+	
 
 	case "NICK":
 		if len(msg.Params) < 1 {
@@ -889,7 +885,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		newNick := msg.Params[0]
 		if strings.EqualFold(oldNick, m.nick) {
 			m.nick = newNick
-			m.status.nick = newNick
+			m.input.nick = newNick
 			if m.client != nil {
 				m.client.SetNick(newNick)
 			}
@@ -915,7 +911,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		if len(msg.Params) > 1 {
 			m.chat.AddSystemMessage(serverBuffer, msg.Params[1])
 		}
-		m.status.server = msg.Source
+		m.channels.SetDisplay(serverBuffer, msg.Source)
 		m.chathistorySupported = m.client.HasCap("chathistory") || m.client.HasCap("draft/chathistory")
 		m.send("LIST")
 
@@ -958,7 +954,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			if nicks, ok := m.namesBuffer[channel]; ok {
 				m.users.SetMembers(channel, nicks)
 				delete(m.namesBuffer, channel)
-				m.status.users = m.users.Count()
+			
 			}
 		}
 
@@ -971,7 +967,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		m.chat.AddSystemMessage(serverBuffer, "Nickname already in use")
 		// Try with underscore.
 		m.nick += "_"
-		m.status.nick = m.nick
+		m.input.nick = m.nick
 		m.send("NICK " + m.nick)
 		if m.client != nil {
 			m.client.SetNick(m.nick)
@@ -990,10 +986,9 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 func (m *model) resize() {
 	m.input.SetWidth(m.width)
 	channelsHeight := 2 // tab bar + border
-	statusHeight := 1
 	inputHeight := 1 + m.input.LineCount() // border + textarea lines
 	paletteHeight := m.palette.Height(m.width)
-	chatHeight := m.height - channelsHeight - statusHeight - inputHeight - paletteHeight
+	chatHeight := m.height - channelsHeight - inputHeight - paletteHeight
 	if chatHeight < 1 {
 		chatHeight = 1
 	}

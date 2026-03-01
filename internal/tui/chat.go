@@ -44,8 +44,10 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	return m, cmd
 }
 
+var chatStyle = lipgloss.NewStyle().PaddingLeft(1).PaddingRight(1)
+
 func (m chatModel) View() string {
-	return m.viewport.View()
+	return chatStyle.Height(m.height).Render(m.viewport.View())
 }
 
 // AddMessage appends a message to a channel buffer.
@@ -116,9 +118,9 @@ func (m *chatModel) ScrollDown() {
 
 // SetSize updates the viewport dimensions.
 func (m *chatModel) SetSize(width, height int) {
-	m.width = width
+	m.width = width - 2 // account for left+right padding
 	m.height = height
-	m.viewport.Width = width
+	m.viewport.Width = m.width
 	m.viewport.Height = height
 	m.refreshViewport()
 }

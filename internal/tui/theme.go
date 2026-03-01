@@ -9,8 +9,15 @@ import (
 // ApplyTheme updates all themed style variables from the given config theme.
 // Must be called before tui.New().
 func ApplyTheme(t config.Theme) {
-	paletteSelStyle = paletteSelStyle.Background(lipgloss.Color(t.BarBg))
-	paletteDescStyle = paletteDescStyle.BorderForeground(lipgloss.Color(t.Border))
+	paletteBg = lipgloss.Color(t.BarBg)
+	paletteSelBg := lipgloss.Color(t.SelBg)
+	if t.SelBg == "" {
+		paletteSelBg = paletteBg
+	}
+	paletteSelStyle = paletteSelStyle.Foreground(lipgloss.Color(t.Accent)).Background(paletteSelBg)
+	paletteNormalStyle = paletteNormalStyle.Background(paletteBg)
+	palettePadStyle = palettePadStyle.Background(paletteBg)
+	paletteDescStyle = paletteDescStyle.BorderForeground(lipgloss.Color(t.Border)).Background(paletteBg).BorderBackground(paletteBg)
 
 	separatorStyle = separatorStyle.Foreground(lipgloss.Color(t.Yellow))
 
@@ -27,10 +34,7 @@ func ApplyTheme(t config.Theme) {
 		Foreground(lipgloss.Color(t.Accent)).
 		Background(lipgloss.Color(t.BarBg))
 
-	statusBarStyle = statusBarStyle.
-		Foreground(lipgloss.Color(t.BarFg)).
-		Background(lipgloss.Color(t.BarBg))
-	statusNickStyle = statusNickStyle.Foreground(lipgloss.Color(t.Green))
+	inputNickStyle = inputNickStyle.Foreground(lipgloss.Color(t.Green))
 
 	format.SetNickColors(t.Nicks)
 }

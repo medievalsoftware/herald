@@ -24,6 +24,7 @@ const (
 type Theme struct {
 	BarBg  string   `toml:"bar_bg"`
 	BarFg  string   `toml:"bar_fg"`
+	SelBg  string   `toml:"sel_bg"`
 	Border string   `toml:"border"`
 	Accent string   `toml:"accent"`
 	Green  string   `toml:"green"`
@@ -36,6 +37,7 @@ func DefaultTheme() Theme {
 	return Theme{
 		BarBg:  "235",
 		BarFg:  "252",
+		SelBg:  "237",
 		Border: "240",
 		Accent: "12",
 		Green:  "10",

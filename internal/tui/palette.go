@@ -65,12 +65,17 @@ var rawCommands = []Command{
 	{Name: "CHATHISTORY", Desc: "CHATHISTORY <subcommand> <target> <reference> <limit>"},
 }
 
+var paletteBg = lipgloss.Color("235")
+
 var (
-	paletteSelStyle    = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("235"))
-	paletteNormalStyle = lipgloss.NewStyle().Faint(true)
+	paletteSelStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")).Background(lipgloss.Color("237"))
+	paletteNormalStyle = lipgloss.NewStyle().Faint(true).Background(paletteBg)
+	palettePadStyle    = lipgloss.NewStyle().Background(paletteBg)
 	paletteDescStyle   = lipgloss.NewStyle().
 				Border(lipgloss.NormalBorder()).
 				BorderForeground(lipgloss.Color("240")).
+				Background(lipgloss.Color("233")).
+				BorderBackground(lipgloss.Color("233")).
 				Padding(0, 1)
 )
 
@@ -187,7 +192,7 @@ func (p *paletteModel) gridLayout(width int) (numCols, numRows, colWidth int) {
 	if numCols < 1 {
 		numCols = 1
 	}
-	colWidth = width / numCols
+	colWidth = (width - 2) / numCols // 2 = 1 cell padding on each side
 
 	numRows = (len(p.matches) + numCols - 1) / numCols
 	if numRows > p.maxShow {
@@ -220,9 +225,6 @@ func (p *paletteModel) View(width int) string {
 
 	numCols, numRows, colWidth := p.gridLayout(width)
 
-	cellSel := paletteSelStyle
-	cellNormal := paletteNormalStyle
-
 	var sections []string
 
 	// Description box for selected item.
@@ -242,25 +244,33 @@ func (p *paletteModel) View(width int) string {
 	}
 
 	// Grid rows — highlight spans only the name, not the padding.
-	padding := paletteNormalStyle
+	lpad := palettePadStyle.Render(" ")
 	for r := range numRows {
 		var row strings.Builder
+		row.WriteString(lpad)
+		used := 1
 		for c := range numCols {
 			idx := c*numRows + r
 			if idx >= len(p.matches) {
 				break
 			}
 			name := p.matches[idx].Name
-			pad := colWidth - lipgloss.Width(name)
+			nameWidth := lipgloss.Width(name)
+			pad := colWidth - nameWidth
 			if pad < 0 {
 				pad = 0
 			}
-			suffix := padding.Render(strings.Repeat(" ", pad))
 			if idx == p.selected {
-				row.WriteString(cellSel.Render(name) + suffix)
+				row.WriteString(paletteSelStyle.Render(name))
 			} else {
-				row.WriteString(cellNormal.Render(name) + suffix)
+				row.WriteString(paletteNormalStyle.Render(name))
 			}
+			row.WriteString(palettePadStyle.Render(strings.Repeat(" ", pad)))
+			used += nameWidth + pad
+		}
+		// Fill remainder (right padding + integer division gap).
+		if rem := width - used; rem > 0 {
+			row.WriteString(palettePadStyle.Render(strings.Repeat(" ", rem)))
 		}
 		sections = append(sections, row.String())
 	}
