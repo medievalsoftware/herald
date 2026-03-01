@@ -282,6 +282,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 		if m.palette.visible {
 			m.palette.Prev()
 			m.fillFromPalette()
+			m.resize()
 		}
 		return m, nil
 
@@ -289,6 +290,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 		if m.palette.visible {
 			m.palette.Next()
 			m.fillFromPalette()
+			m.resize()
 		}
 		return m, nil
 
@@ -986,7 +988,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 func (m *model) resize() {
 	m.input.SetWidth(m.width)
 	channelsHeight := 2 // tab bar + border
-	inputHeight := 1 + m.input.LineCount() // border + textarea lines
+	inputHeight := m.input.LineCount()
 	paletteHeight := m.palette.Height(m.width)
 	chatHeight := m.height - channelsHeight - inputHeight - paletteHeight
 	if chatHeight < 1 {

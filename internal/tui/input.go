@@ -37,7 +37,7 @@ func newInput() inputModel {
 
 	return inputModel{
 		textarea: ta,
-		style:    lipgloss.NewStyle().BorderTop(true).BorderStyle(lipgloss.NormalBorder()).PaddingLeft(1),
+		style:    lipgloss.NewStyle().PaddingLeft(1),
 	}
 }
 

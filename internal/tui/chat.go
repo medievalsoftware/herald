@@ -47,7 +47,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 var chatStyle = lipgloss.NewStyle().PaddingLeft(1).PaddingRight(1)
 
 func (m chatModel) View() string {
-	return chatStyle.Height(m.height).Render(m.viewport.View())
+	return chatStyle.Render(m.viewport.View())
 }
 
 // AddMessage appends a message to a channel buffer.

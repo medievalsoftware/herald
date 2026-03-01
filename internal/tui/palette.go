@@ -185,36 +185,28 @@ func (p *paletteModel) updateWith(filter string, cmds []Command) {
 // gridLayout computes column dimensions for the current matches.
 // Always uses 4 columns (or fewer if there aren't enough items).
 func (p *paletteModel) gridLayout(width int) (numCols, numRows, colWidth int) {
-	numCols = 4
-	if numCols > len(p.matches) {
-		numCols = len(p.matches)
-	}
-	if numCols < 1 {
-		numCols = 1
-	}
+	numCols = max(min(4, len(p.matches)), 1)
 	colWidth = (width - 2) / numCols // 2 = 1 cell padding on each side
 
-	numRows = (len(p.matches) + numCols - 1) / numCols
-	if numRows > p.maxShow {
-		numRows = p.maxShow
-	}
+	numRows = min((len(p.matches)+numCols-1)/numCols, p.maxShow)
 	return
 }
 
-// descHeight returns the height of the description box for the selected item.
-func (p *paletteModel) descHeight() int {
+// renderDesc renders the description box for the selected item, or "" if none.
+func (p *paletteModel) renderDesc(width int) string {
 	if p.completionMode || len(p.matches) == 0 || p.selected < 0 {
-		return 0
+		return ""
 	}
 	sel := p.matches[p.selected]
 	if sel.Desc == "" {
-		return 0
+		return ""
 	}
-	h := 3 // top border + description + bottom border
+	content := sel.Desc
 	if len(sel.Aliases) > 0 {
-		h++
+		content += "\nAliases: " + strings.Join(sel.Aliases, ", ")
 	}
-	return h
+	boxWidth := max(width-2, 1)
+	return paletteDescStyle.Width(boxWidth).Render(content)
 }
 
 // View renders the palette as a multi-column grid with a description box.
@@ -228,19 +220,8 @@ func (p *paletteModel) View(width int) string {
 	var sections []string
 
 	// Description box for selected item.
-	if !p.completionMode && p.selected >= 0 {
-		if sel := p.matches[p.selected]; sel.Desc != "" {
-			content := sel.Desc
-			if len(sel.Aliases) > 0 {
-				content += "\nAliases: " + strings.Join(sel.Aliases, ", ")
-			}
-			boxWidth := width - 2
-			if boxWidth < 1 {
-				boxWidth = 1
-			}
-			box := paletteDescStyle.Width(boxWidth).Render(content)
-			sections = append(sections, box)
-		}
+	if desc := p.renderDesc(width); desc != "" {
+		sections = append(sections, desc)
 	}
 
 	// Grid rows — highlight spans only the name, not the padding.
@@ -256,10 +237,7 @@ func (p *paletteModel) View(width int) string {
 			}
 			name := p.matches[idx].Name
 			nameWidth := lipgloss.Width(name)
-			pad := colWidth - nameWidth
-			if pad < 0 {
-				pad = 0
-			}
+			pad := max(colWidth-nameWidth, 0)
 			if idx == p.selected {
 				row.WriteString(paletteSelStyle.Render(name))
 			} else {
@@ -284,7 +262,11 @@ func (p *paletteModel) Height(width int) int {
 		return 0
 	}
 	_, numRows, _ := p.gridLayout(width)
-	return p.descHeight() + numRows
+	descH := 0
+	if desc := p.renderDesc(width); desc != "" {
+		descH = lipgloss.Height(desc)
+	}
+	return descH + numRows
 }
 
 // Selected returns the currently selected command, if any.
