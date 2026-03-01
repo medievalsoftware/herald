@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -9,29 +8,70 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// ArgType identifies what kind of completion a command argument expects.
+type ArgType int
+
+const (
+	ArgChannel ArgType = iota + 1 // complete from available/joined channels
+	ArgNick                       // complete from known nicks
+	ArgTarget                     // channel or nick
+	ArgSetting                    // complete from available settings
+	ArgTheme                      // complete from available themes
+)
+
 // Command describes an IRC command available in the palette.
 type Command struct {
 	Name    string
 	Aliases []string
 	Desc    string
-	Args    bool
+	Args    []ArgType // completion types for each positional argument
 }
 
 var commands = []Command{
-	{Name: "join", Aliases: []string{"j"}, Desc: "Join a channel", Args: true},
-	{Name: "leave", Aliases: []string{"part"}, Desc: "Leave current channel", Args: true},
-	{Name: "dm", Aliases: []string{"msg", "m", "query"}, Desc: "Send a direct message", Args: true},
-	{Name: "me", Aliases: []string{"action"}, Desc: "Send an action", Args: true},
-	{Name: "nick", Desc: "Change nickname", Args: true},
-	{Name: "quit", Aliases: []string{"exit", "q", "q!"}, Desc: "Disconnect from server", Args: false},
-	{Name: "raw", Aliases: []string{"quote"}, Desc: "Send raw IRC command", Args: true},
-	{Name: "set", Desc: "Change a setting", Args: true},
-	{Name: "theme", Desc: "Switch color theme", Args: true},
+	{Name: "join", Aliases: []string{"j"}, Desc: "Join a channel", Args: []ArgType{ArgChannel}},
+	{Name: "leave", Aliases: []string{"part"}, Desc: "Leave current channel", Args: []ArgType{ArgChannel}},
+	{Name: "dm", Aliases: []string{"msg", "m", "query"}, Desc: "Send a direct message", Args: []ArgType{ArgNick}},
+	{Name: "me", Aliases: []string{"action"}, Desc: "Send an action"},
+	{Name: "nick", Desc: "Change nickname"},
+	{Name: "quit", Aliases: []string{"exit", "q", "q!"}, Desc: "Disconnect from server"},
+	{Name: "set", Desc: "Change a setting", Args: []ArgType{ArgSetting}},
+	{Name: "theme", Desc: "Switch color theme", Args: []ArgType{ArgTheme}},
+}
+
+var rawCommands = []Command{
+	{Name: "JOIN", Desc: "JOIN <channel>{,<channel>} [<key>{,<key>}]", Args: []ArgType{ArgChannel}},
+	{Name: "PART", Desc: "PART <channel>{,<channel>} [<reason>]", Args: []ArgType{ArgChannel}},
+	{Name: "PRIVMSG", Desc: "PRIVMSG <target> :<message>", Args: []ArgType{ArgTarget}},
+	{Name: "NOTICE", Desc: "NOTICE <target> :<message>", Args: []ArgType{ArgTarget}},
+	{Name: "NICK", Desc: "NICK <nickname>"},
+	{Name: "QUIT", Desc: "QUIT [<reason>]"},
+	{Name: "MODE", Desc: "MODE <target> [<modestring> [<args>...]]", Args: []ArgType{ArgTarget}},
+	{Name: "TOPIC", Desc: "TOPIC <channel> [<topic>]", Args: []ArgType{ArgChannel}},
+	{Name: "KICK", Desc: "KICK <channel> <user> [<comment>]", Args: []ArgType{ArgChannel, ArgNick}},
+	{Name: "INVITE", Desc: "INVITE <nickname> <channel>", Args: []ArgType{ArgNick, ArgChannel}},
+	{Name: "WHO", Desc: "WHO [<mask>]"},
+	{Name: "WHOIS", Desc: "WHOIS <nick>{,<nick>}", Args: []ArgType{ArgNick}},
+	{Name: "LIST", Desc: "LIST [<channel>{,<channel>}]", Args: []ArgType{ArgChannel}},
+	{Name: "NAMES", Desc: "NAMES [<channel>{,<channel>}]", Args: []ArgType{ArgChannel}},
+	{Name: "MOTD", Desc: "MOTD"},
+	{Name: "OPER", Desc: "OPER <name> <password>"},
+	{Name: "KILL", Desc: "KILL <nickname> <reason>", Args: []ArgType{ArgNick}},
+	{Name: "SAMODE", Desc: "SAMODE <target> [<modestring> [<args>...]]", Args: []ArgType{ArgTarget}},
+	{Name: "SAJOIN", Desc: "SAJOIN [<nick>] <channel>{,<channel>}", Args: []ArgType{ArgNick, ArgChannel}},
+	{Name: "UBAN", Desc: "UBAN <ADD|DEL|LIST|INFO> [<args>...]"},
+	{Name: "DLINE", Desc: "DLINE [ANDKILL] [<duration>] <ip/net> [<reason>]"},
+	{Name: "KLINE", Desc: "KLINE [ANDKILL] [<duration>] <mask> [<reason>]"},
+	{Name: "DEFCON", Desc: "DEFCON [<level>]"},
+	{Name: "CHATHISTORY", Desc: "CHATHISTORY <subcommand> <target> <reference> <limit>"},
 }
 
 var (
-	paletteSelStyle    = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("235")).Padding(0, 1)
-	paletteNormalStyle = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+	paletteSelStyle    = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("235"))
+	paletteNormalStyle = lipgloss.NewStyle().Faint(true)
+	paletteDescStyle   = lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("240")).
+				Padding(0, 1)
 )
 
 type paletteModel struct {
@@ -71,27 +111,34 @@ func (p *paletteModel) UpdateCompletions(filter string, items []string) {
 	for i, r := range results {
 		p.matches[i] = Command{Name: r.name}
 	}
-	if p.selected >= len(p.matches) {
-		p.selected = max(0, len(p.matches)-1)
-	}
+	p.selected = -1 // nothing selected until Tab
 	p.visible = len(p.matches) > 0
 	p.completionMode = true
 }
 
 // SelectedName returns the Name of the selected item.
 func (p *paletteModel) SelectedName() (string, bool) {
-	if len(p.matches) == 0 {
+	if len(p.matches) == 0 || p.selected < 0 {
 		return "", false
 	}
 	return p.matches[p.selected].Name, true
 }
 
-// Update filters commands against the given pattern and makes the palette visible.
+// Update filters herald commands against the given pattern.
 func (p *paletteModel) Update(filter string) {
+	p.updateWith(filter, commands)
+}
+
+// UpdateRaw filters raw IRC commands against the given pattern.
+func (p *paletteModel) UpdateRaw(filter string) {
+	p.updateWith(filter, rawCommands)
+}
+
+func (p *paletteModel) updateWith(filter string, cmds []Command) {
 	p.completionMode = false
 	if filter == "" {
-		p.matches = commands
-		p.selected = 0
+		p.matches = cmds
+		p.selected = -1
 		p.visible = true
 		return
 	}
@@ -101,7 +148,7 @@ func (p *paletteModel) Update(filter string) {
 		score int
 	}
 	var results []scored
-	for _, c := range commands {
+	for _, c := range cmds {
 		best, matched := fuzzyScore(filter, c.Name)
 		for _, alias := range c.Aliases {
 			if s, ok := fuzzyScore(filter, alias); ok {
@@ -126,71 +173,113 @@ func (p *paletteModel) Update(filter string) {
 	for i, r := range results {
 		p.matches[i] = r.cmd
 	}
-	if p.selected >= len(p.matches) {
-		p.selected = max(0, len(p.matches)-1)
-	}
+	p.selected = -1
 	p.visible = len(p.matches) > 0
 }
 
-// View renders the palette rows. Returns empty string when hidden or no matches.
+// gridLayout computes column dimensions for the current matches.
+// Always uses 4 columns (or fewer if there aren't enough items).
+func (p *paletteModel) gridLayout(width int) (numCols, numRows, colWidth int) {
+	numCols = 4
+	if numCols > len(p.matches) {
+		numCols = len(p.matches)
+	}
+	if numCols < 1 {
+		numCols = 1
+	}
+	colWidth = width / numCols
+
+	numRows = (len(p.matches) + numCols - 1) / numCols
+	if numRows > p.maxShow {
+		numRows = p.maxShow
+	}
+	return
+}
+
+// descHeight returns the height of the description box for the selected item.
+func (p *paletteModel) descHeight() int {
+	if p.completionMode || len(p.matches) == 0 || p.selected < 0 {
+		return 0
+	}
+	sel := p.matches[p.selected]
+	if sel.Desc == "" {
+		return 0
+	}
+	h := 3 // top border + description + bottom border
+	if len(sel.Aliases) > 0 {
+		h++
+	}
+	return h
+}
+
+// View renders the palette as a multi-column grid with a description box.
 func (p *paletteModel) View(width int) string {
 	if !p.visible || len(p.matches) == 0 {
 		return ""
 	}
 
-	selStyle := paletteSelStyle.Width(width)
-	normalStyle := paletteNormalStyle.Width(width)
+	numCols, numRows, colWidth := p.gridLayout(width)
 
-	show := len(p.matches)
-	if show > p.maxShow {
-		show = p.maxShow
-	}
+	cellSel := paletteSelStyle
+	cellNormal := paletteNormalStyle
 
-	var rows []string
-	for i := range show {
-		cmd := p.matches[i]
+	var sections []string
 
-		var content string
-		if p.completionMode {
-			content = cmd.Name
-		} else {
-			name := cmd.Name
-			desc := cmd.Desc
-			if len(cmd.Aliases) > 0 {
-				desc += " (" + strings.Join(cmd.Aliases, ", ") + ")"
+	// Description box for selected item.
+	if !p.completionMode && p.selected >= 0 {
+		if sel := p.matches[p.selected]; sel.Desc != "" {
+			content := sel.Desc
+			if len(sel.Aliases) > 0 {
+				content += "\nAliases: " + strings.Join(sel.Aliases, ", ")
 			}
-			gap := width - lipgloss.Width(name) - lipgloss.Width(desc) - 2
-			if gap < 1 {
-				gap = 1
+			boxWidth := width - 2
+			if boxWidth < 1 {
+				boxWidth = 1
 			}
-			content = name + fmt.Sprintf("%*s", gap, "") + desc
-		}
-
-		if i == p.selected {
-			rows = append(rows, selStyle.Render(content))
-		} else {
-			rows = append(rows, normalStyle.Render(content))
+			box := paletteDescStyle.Width(boxWidth).Render(content)
+			sections = append(sections, box)
 		}
 	}
 
-	return strings.Join(rows, "\n")
+	// Grid rows — highlight spans only the name, not the padding.
+	padding := paletteNormalStyle
+	for r := range numRows {
+		var row strings.Builder
+		for c := range numCols {
+			idx := c*numRows + r
+			if idx >= len(p.matches) {
+				break
+			}
+			name := p.matches[idx].Name
+			pad := colWidth - lipgloss.Width(name)
+			if pad < 0 {
+				pad = 0
+			}
+			suffix := padding.Render(strings.Repeat(" ", pad))
+			if idx == p.selected {
+				row.WriteString(cellSel.Render(name) + suffix)
+			} else {
+				row.WriteString(cellNormal.Render(name) + suffix)
+			}
+		}
+		sections = append(sections, row.String())
+	}
+
+	return strings.Join(sections, "\n")
 }
 
 // Height returns the number of terminal lines the palette occupies.
-func (p *paletteModel) Height() int {
+func (p *paletteModel) Height(width int) int {
 	if !p.visible || len(p.matches) == 0 {
 		return 0
 	}
-	h := len(p.matches)
-	if h > p.maxShow {
-		h = p.maxShow
-	}
-	return h
+	_, numRows, _ := p.gridLayout(width)
+	return p.descHeight() + numRows
 }
 
 // Selected returns the currently selected command, if any.
 func (p *paletteModel) Selected() (Command, bool) {
-	if len(p.matches) == 0 {
+	if len(p.matches) == 0 || p.selected < 0 {
 		return Command{}, false
 	}
 	return p.matches[p.selected], true
@@ -201,12 +290,20 @@ func (p *paletteModel) Next() {
 	if len(p.matches) == 0 {
 		return
 	}
+	if p.selected < 0 {
+		p.selected = 0
+		return
+	}
 	p.selected = (p.selected + 1) % len(p.matches)
 }
 
 // Prev moves selection up, wrapping around.
 func (p *paletteModel) Prev() {
 	if len(p.matches) == 0 {
+		return
+	}
+	if p.selected < 0 {
+		p.selected = len(p.matches) - 1
 		return
 	}
 	p.selected = (p.selected - 1 + len(p.matches)) % len(p.matches)

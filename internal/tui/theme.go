@@ -10,6 +10,7 @@ import (
 // Must be called before tui.New().
 func ApplyTheme(t config.Theme) {
 	paletteSelStyle = paletteSelStyle.Background(lipgloss.Color(t.BarBg))
+	paletteDescStyle = paletteDescStyle.BorderForeground(lipgloss.Color(t.Border))
 
 	separatorStyle = separatorStyle.Foreground(lipgloss.Color(t.Yellow))
 

@@ -8,10 +8,19 @@ import (
 
 const inputMaxHeight = 6
 
+// inputMode represents the current input mode.
+type inputMode int
+
+const (
+	modeChat    inputMode = iota // > prompt, sends PRIVMSG
+	modeCommand                  // : prompt, runs commands
+	modeRaw                      // " prompt, sends raw IRC
+)
+
 type inputModel struct {
-	textarea    textarea.Model
-	style       lipgloss.Style
-	commandMode bool // true = command (:), false = chat (>)
+	textarea textarea.Model
+	style    lipgloss.Style
+	mode     inputMode
 }
 
 func newInput() inputModel {
@@ -64,16 +73,33 @@ func (m inputModel) View(width int) string {
 
 // CommandMode returns whether the input is in command mode.
 func (m *inputModel) CommandMode() bool {
-	return m.commandMode
+	return m.mode == modeCommand
+}
+
+// RawMode returns whether the input is in raw IRC mode.
+func (m *inputModel) RawMode() bool {
+	return m.mode == modeRaw
+}
+
+// SetMode switches the input mode and updates the prompt.
+func (m *inputModel) SetMode(mode inputMode) {
+	m.mode = mode
+	switch mode {
+	case modeCommand:
+		m.textarea.Prompt = ": "
+	case modeRaw:
+		m.textarea.Prompt = "\" "
+	default:
+		m.textarea.Prompt = "> "
+	}
 }
 
 // SetCommandMode switches between command (:) and chat (>) mode.
 func (m *inputModel) SetCommandMode(cmd bool) {
-	m.commandMode = cmd
 	if cmd {
-		m.textarea.Prompt = ": "
+		m.SetMode(modeCommand)
 	} else {
-		m.textarea.Prompt = "> "
+		m.SetMode(modeChat)
 	}
 }
 

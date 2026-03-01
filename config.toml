@@ -42,12 +42,11 @@ history_limit = 100
 
 # Insert mode (when the input textarea is focused).
 # Default bindings:
-#   C-c  = cancel           Clear input and return to normal mode
-#   esc  = cancel
-#   ret  = submit           Submit input
-#   up   = palette_up       Navigate palette up
-#   down = palette_down     Navigate palette down
-#   tab  = palette_select   Select palette item
+#   C-c       = cancel           Clear input and return to normal mode
+#   esc       = cancel
+#   ret       = submit           Submit input
+#   tab       = palette_down     Navigate palette down
+#   S-tab     = palette_up       Navigate palette up
 [keys.insert]
 
 # Available actions:
@@ -60,7 +59,6 @@ history_limit = 100
 #   submit          Submit current input
 #   palette_up      Move palette selection up
 #   palette_down    Move palette selection down
-#   palette_select  Accept palette selection
 #   scroll_up       Scroll chat viewport up
 #   scroll_down     Scroll chat viewport down
 #   join            Open :join command
@@ -70,5 +68,5 @@ history_limit = 100
 #   nick            Open :nick command
 #   theme           Open :theme command
 #   set             Open :set command
-#   raw             Open :raw command
+#   raw_mode        Open raw IRC input (" prompt)
 #   irc_quit        Send IRC QUIT and disconnect

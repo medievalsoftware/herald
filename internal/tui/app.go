@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type model struct {
 	config   config.Config
 	addr     string
 	nick     string
+	pass     string
 	channels channelsModel
 	chat     chatModel
 	input    inputModel
@@ -53,11 +55,12 @@ type model struct {
 }
 
 // New creates a new TUI model wired to connect to the given server.
-func New(addr, nick string, cfg config.Config) *model {
+func New(addr, nick, pass string, cfg config.Config) *model {
 	km := BuildKeyMap(cfg.Keys)
 	m := &model{
 		addr:        addr,
 		nick:        nick,
+		pass:        pass,
 		config:      cfg,
 		channels:    newChannels(),
 		chat:        newChat(cfg.Timestamp),
@@ -151,7 +154,11 @@ func (m *model) View() string {
 }
 
 func (m *model) SetProgram(p *tea.Program) {
-	c := client.New(func(msg any) { p.Send(msg) })
+	var opts []client.Option
+	if m.pass != "" {
+		opts = append(opts, client.WithPass(m.pass))
+	}
+	c := client.New(func(msg any) { p.Send(msg) }, opts...)
 	m.client = c
 	go func() {
 		if err := c.Connect(context.Background(), m.addr, m.nick); err != nil {
@@ -278,26 +285,14 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 	case ActionPaletteUp:
 		if m.palette.visible {
 			m.palette.Prev()
+			m.fillFromPalette()
 		}
 		return m, nil
 
 	case ActionPaletteDown:
 		if m.palette.visible {
 			m.palette.Next()
-		}
-		return m, nil
-
-	case ActionPaletteSelect:
-		if m.palette.visible {
-			if m.palette.completionMode {
-				if name, ok := m.palette.SelectedName(); ok {
-					m.fillCompletion(name)
-				}
-			} else if cmd, ok := m.palette.Selected(); ok {
-				m.input.SetValue(cmd.Name + " ")
-				m.palette.Hide()
-				m.resize()
-			}
+			m.fillFromPalette()
 		}
 		return m, nil
 
@@ -330,11 +325,14 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 	case ActionSet:
 		return m.enterCommandWith("set ")
 
-	case ActionRaw:
-		return m.enterCommandWith("raw ")
-
 	case ActionIRCQuit:
 		return m.handleCommand("quit")
+
+	case ActionRawMode:
+		m.input.SetMode(modeRaw)
+		cmd := m.input.Focus()
+		m.updatePalette()
+		return m, cmd
 	}
 
 	return m, nil
@@ -351,46 +349,125 @@ func (m *model) enterCommandWith(val string) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updatePalette() {
-	if !m.input.CommandMode() {
+	var cmds []Command
+	if m.input.RawMode() {
+		cmds = rawCommands
+	} else if m.input.CommandMode() {
+		cmds = commands
+	} else {
 		m.palette.Hide()
 		m.resize()
 		return
 	}
 
 	val := m.input.Value()
-	if !strings.Contains(val, " ") {
-		// Command name completion.
-		m.palette.Update(val)
+	fields := strings.Fields(val)
+
+	// No args yet — show command name completions.
+	if len(fields) <= 1 && !strings.HasSuffix(val, " ") {
+		if m.input.RawMode() {
+			m.palette.UpdateRaw(val)
+		} else {
+			m.palette.Update(val)
+		}
 		m.resize()
 		return
 	}
 
-	parts := strings.SplitN(val, " ", 2)
-	cmd := resolveAlias(parts[0])
-	partial := parts[1]
-
-	// Don't complete if arg already has a space (second arg started).
-	if strings.Contains(partial, " ") {
+	// Find the command definition.
+	cmdName := fields[0]
+	cmd, ok := findCommand(cmds, cmdName)
+	if !ok || len(cmd.Args) == 0 {
 		m.palette.Hide()
 		m.resize()
 		return
 	}
 
-	switch cmd {
-	case "join":
-		m.palette.UpdateCompletions(partial, m.availableChannels)
-	case "leave":
-		m.palette.UpdateCompletions(partial, m.joinedChannels())
-	case "dm":
-		m.palette.UpdateCompletions(partial, m.knownNicks())
-	case "set":
-		m.palette.UpdateCompletions(partial, settingNames())
-	case "theme":
-		m.palette.UpdateCompletions(partial, config.AvailableThemes())
-	default:
-		m.palette.Hide()
+	// Determine which arg position we're editing.
+	// fields[0] is the command, fields[1..] are completed args.
+	// If the input ends with a space, we're starting a new arg.
+	argIdx := len(fields) - 1 // 0-based arg position
+	if strings.HasSuffix(val, " ") {
+		argIdx = len(fields) // next position
 	}
+	argIdx-- // adjust: fields[0] is command, so arg 0 = fields[1]
+	if strings.HasSuffix(val, " ") {
+		argIdx = len(fields) - 1
+	}
+
+	if argIdx >= len(cmd.Args) {
+		m.palette.Hide()
+		m.resize()
+		return
+	}
+
+	// Extract the partial text being typed for the current arg.
+	partial := ""
+	if !strings.HasSuffix(val, " ") && len(fields) > 1 {
+		partial = fields[len(fields)-1]
+	}
+
+	candidates := m.completionsFor(cmd.Args[argIdx])
+	if candidates == nil {
+		m.palette.Hide()
+		m.resize()
+		return
+	}
+	m.palette.UpdateCompletions(partial, candidates)
 	m.resize()
+}
+
+// findCommand looks up a command by name (or alias for herald commands).
+func findCommand(cmds []Command, name string) (Command, bool) {
+	lower := strings.ToLower(name)
+	upper := strings.ToUpper(name)
+	for _, c := range cmds {
+		if c.Name == lower || c.Name == upper || strings.EqualFold(c.Name, name) {
+			return c, true
+		}
+		for _, a := range c.Aliases {
+			if strings.EqualFold(a, name) {
+				return c, true
+			}
+		}
+	}
+	return Command{}, false
+}
+
+// completionsFor returns the candidate list for a given ArgType.
+func (m *model) completionsFor(arg ArgType) []string {
+	switch arg {
+	case ArgChannel:
+		// Combine available (from LIST) and joined channels.
+		seen := make(map[string]bool)
+		var out []string
+		for _, ch := range m.availableChannels {
+			if !seen[ch] {
+				seen[ch] = true
+				out = append(out, ch)
+			}
+		}
+		for _, ch := range m.joinedChannels() {
+			if !seen[ch] {
+				seen[ch] = true
+				out = append(out, ch)
+			}
+		}
+		return out
+	case ArgNick:
+		return m.knownNicks()
+	case ArgTarget:
+		// Channels + nicks.
+		var out []string
+		out = append(out, m.joinedChannels()...)
+		out = append(out, m.knownNicks()...)
+		return out
+	case ArgSetting:
+		return settingNames()
+	case ArgTheme:
+		return config.AvailableThemes()
+	}
+	return nil
 }
 
 func (m *model) joinedChannels() []string {
@@ -416,18 +493,42 @@ func settingNames() []string {
 	return names
 }
 
-// fillCompletion replaces the argument portion of input with the selected completion.
+// fillFromPalette replaces the current arg in the input with the selected palette item.
+func (m *model) fillFromPalette() {
+	if m.palette.completionMode {
+		if name, ok := m.palette.SelectedName(); ok {
+			m.replaceLastArg(name)
+		}
+	} else if cmd, ok := m.palette.Selected(); ok {
+		m.input.SetValue(cmd.Name)
+	}
+}
+
+// fillCompletion replaces the current arg with the selected completion.
 func (m *model) fillCompletion(name string) {
-	val := m.input.Value()
-	parts := strings.SplitN(val, " ", 2)
-	m.input.SetValue(parts[0] + " " + name)
+	m.replaceLastArg(name)
 	m.palette.Hide()
 	m.resize()
 }
 
+// replaceLastArg replaces the last whitespace-delimited token (or appends if input ends with space).
+func (m *model) replaceLastArg(name string) {
+	val := m.input.Value()
+	if strings.HasSuffix(val, " ") {
+		m.input.SetValue(val + name)
+		return
+	}
+	// Find the last space and replace everything after it.
+	if i := strings.LastIndex(val, " "); i >= 0 {
+		m.input.SetValue(val[:i+1] + name)
+	} else {
+		m.input.SetValue(name)
+	}
+}
+
 func (m *model) handleInput() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
-	commandMode := m.input.CommandMode()
+	mode := m.input.mode
 	m.input.Reset()
 	m.input.Blur()
 	m.palette.Hide()
@@ -437,11 +538,17 @@ func (m *model) handleInput() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if commandMode {
-		return m.handleCommand(text)
-	}
+	text = expandEnvBraces(text)
 
-	return m.sendChat(text)
+	switch mode {
+	case modeCommand:
+		return m.handleCommand(text)
+	case modeRaw:
+		m.send(text)
+		return m, nil
+	default:
+		return m.sendChat(text)
+	}
 }
 
 func (m *model) sendChat(text string) (tea.Model, tea.Cmd) {
@@ -597,9 +704,6 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		}
 		m.chat.AddSystemMessage(buf, "Theme switched to "+args)
 		m.chat.refreshViewport()
-
-	case "RAW":
-		m.send(args)
 
 	case "TEST_HISTORY":
 		m.testHistory()
@@ -888,7 +992,7 @@ func (m *model) resize() {
 	channelsHeight := 2 // tab bar + border
 	statusHeight := 1
 	inputHeight := 1 + m.input.LineCount() // border + textarea lines
-	paletteHeight := m.palette.Height()
+	paletteHeight := m.palette.Height(m.width)
 	chatHeight := m.height - channelsHeight - statusHeight - inputHeight - paletteHeight
 	if chatHeight < 1 {
 		chatHeight = 1
@@ -912,6 +1016,24 @@ func parseNick(prefix string) string {
 		return prefix[:i]
 	}
 	return prefix
+}
+
+// expandEnvBraces replaces ${VAR} with the environment variable value.
+// Only the braced form is expanded; bare $VAR is left as-is.
+func expandEnvBraces(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i+2 < len(s) && s[i] == '$' && s[i+1] == '{' {
+			if end := strings.IndexByte(s[i+2:], '}'); end >= 0 {
+				key := s[i+2 : i+2+end]
+				b.WriteString(os.Getenv(key))
+				i += 2 + end // skip past '}'
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func isChannel(s string) bool {

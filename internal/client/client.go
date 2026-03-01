@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,12 +20,25 @@ type Client struct {
 	dispatch func(any)
 	mu       sync.Mutex
 	nick     string
+	pass     string
 	caps     map[string]string
 }
 
 // New creates a Client that will send tea.Msg values through dispatch.
-func New(dispatch func(any)) *Client {
-	return &Client{dispatch: dispatch}
+func New(dispatch func(any), opts ...Option) *Client {
+	c := &Client{dispatch: dispatch}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithPass sets the server password sent during registration.
+func WithPass(pass string) Option {
+	return func(c *Client) { c.pass = pass }
 }
 
 // Connect dials the WebSocket server and performs IRC registration with
@@ -48,7 +62,13 @@ func (c *Client) Connect(ctx context.Context, addr, nick string) error {
 		return err
 	}
 
-	// IRC registration.
+	// Fall back to PASS when SASL wasn't available.
+	if c.pass != "" && !c.HasCap("sasl") {
+		if err := c.Send(ctx, "PASS "+c.pass); err != nil {
+			_ = conn.CloseNow()
+			return err
+		}
+	}
 	if err := c.Send(ctx, "NICK "+nick); err != nil {
 		_ = conn.CloseNow()
 		return err
@@ -129,6 +149,12 @@ func (c *Client) negotiateCAPs(ctx context.Context) error {
 			want = append(want, cap)
 		}
 	}
+	// Request SASL when we have a password and server supports it.
+	if c.pass != "" {
+		if _, ok := advertised["sasl"]; ok {
+			want = append(want, "sasl")
+		}
+	}
 	if len(want) == 0 {
 		return nil
 	}
@@ -157,11 +183,66 @@ func (c *Client) negotiateCAPs(ctx context.Context) error {
 			for _, cap := range strings.Fields(msg.Params[len(msg.Params)-1]) {
 				c.caps[cap] = advertised[cap]
 			}
-			return nil
+			break
 		}
 		if strings.EqualFold(subcommand, "NAK") {
 			// Server refused; proceed without caps.
 			return nil
+		}
+	}
+
+	// Perform SASL PLAIN authentication if the cap was granted.
+	if c.pass != "" && c.HasCap("sasl") {
+		if err := c.authenticateSASL(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// authenticateSASL performs SASL PLAIN authentication.
+func (c *Client) authenticateSASL(ctx context.Context) error {
+	if err := c.Send(ctx, "AUTHENTICATE PLAIN"); err != nil {
+		return err
+	}
+
+	// Wait for AUTHENTICATE +.
+	for {
+		msg, err := c.readMessage(ctx)
+		if err != nil {
+			return err
+		}
+		if msg.Command == "AUTHENTICATE" && len(msg.Params) > 0 && msg.Params[0] == "+" {
+			break
+		}
+		c.dispatch(IRCMsg{msg})
+	}
+
+	// Send base64(\0nick\0pass) — empty authzid, nick as authcid.
+	payload := "\x00" + c.nick + "\x00" + c.pass
+	encoded := base64.StdEncoding.EncodeToString([]byte(payload))
+	if err := c.Send(ctx, "AUTHENTICATE "+encoded); err != nil {
+		return err
+	}
+
+	// Wait for 903 (success) or 904 (failure).
+	for {
+		msg, err := c.readMessage(ctx)
+		if err != nil {
+			return err
+		}
+		switch msg.Command {
+		case "903": // RPL_SASLSUCCESS
+			return nil
+		case "904", "905": // ERR_SASLFAIL, ERR_SASLTOOLONG
+			detail := "SASL authentication failed"
+			if len(msg.Params) > 1 {
+				detail = msg.Params[len(msg.Params)-1]
+			}
+			return fmt.Errorf("%s", detail)
+		default:
+			c.dispatch(IRCMsg{msg})
 		}
 	}
 }

@@ -19,7 +19,6 @@ const (
 	ActionSubmit        Action = "submit"
 	ActionPaletteUp     Action = "palette_up"
 	ActionPaletteDown   Action = "palette_down"
-	ActionPaletteSelect Action = "palette_select"
 	ActionScrollUp      Action = "scroll_up"
 	ActionScrollDown    Action = "scroll_down"
 	ActionJoin          Action = "join"
@@ -29,8 +28,8 @@ const (
 	ActionNick          Action = "nick"
 	ActionTheme         Action = "theme"
 	ActionSet           Action = "set"
-	ActionRaw           Action = "raw"
 	ActionIRCQuit       Action = "irc_quit"
+	ActionRawMode       Action = "raw_mode"
 )
 
 // KeyMap holds resolved key bindings for all modes.
@@ -50,16 +49,16 @@ func DefaultKeyMap() KeyMap {
 			"alt+left":  ActionPrevChannel,
 			"enter":     ActionChat,
 			":":         ActionCommand,
+			"\"":        ActionRawMode,
 			"pgup":      ActionScrollUp,
 			"pgdown":    ActionScrollDown,
 		},
 		Insert: map[string]Action{
-			"ctrl+c": ActionCancel,
-			"esc":    ActionCancel,
-			"enter":  ActionSubmit,
-			"up":     ActionPaletteUp,
-			"down":   ActionPaletteDown,
-			"tab":    ActionPaletteSelect,
+			"ctrl+c":    ActionCancel,
+			"esc":       ActionCancel,
+			"enter":     ActionSubmit,
+			"tab":       ActionPaletteDown,
+			"shift+tab": ActionPaletteUp,
 		},
 	}
 }
