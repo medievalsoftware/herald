@@ -7,7 +7,7 @@ A terminal IRC client that connects over WebSocket.
 ## Install
 
 ```
-go install github.com/medievalsoftware/herald/cmd/herald@latest
+go install github.com/medievalsoftware/herald@latest
 ```
 
 ## Usage
@@ -267,7 +267,7 @@ mise run build
 Or directly:
 
 ```
-go build -o herald ./cmd/herald
+go build -o herald .
 ```
 
 ## Development

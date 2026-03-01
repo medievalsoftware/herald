@@ -5,7 +5,7 @@ gofumpt = "latest"
 
 [tasks.build]
 description = "Build herald binary"
-run = "go build -o herald ./cmd/herald"
+run = "go build -o herald ."
 
 [tasks.fmt]
 description = "Format code"
