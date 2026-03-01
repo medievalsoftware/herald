@@ -1,0 +1,24 @@
+[tools]
+go = "1.24"
+golangci-lint = "2"
+gofumpt = "latest"
+
+[tasks.build]
+description = "Build herald binary"
+run = "go build -o herald ./cmd/herald"
+
+[tasks.fmt]
+description = "Format code"
+run = "gofumpt -w ."
+
+[tasks.lint]
+description = "Lint code"
+run = "golangci-lint run ./..."
+
+[tasks.test]
+description = "Run tests"
+run = "go test ./..."
+
+[tasks.check]
+description = "Format, lint, and test"
+depends = ["fmt", "lint", "test"]
