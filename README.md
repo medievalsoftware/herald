@@ -2,6 +2,9 @@
 
 A terminal IRC client that connects over WebSocket.
 
+<img width="561" height="431" alt="image" src="https://github.com/user-attachments/assets/ce04c0fd-be4c-4571-a29b-ee469756ad0c" />
+
+
 ## Usage
 
 ```
