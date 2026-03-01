@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -9,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/medievalsoftware/herald/internal/format"
+	"github.com/muesli/termenv"
 )
 
 type chatLine struct {
@@ -108,13 +108,18 @@ func (m *chatModel) SetSize(width, height int) {
 	m.refreshViewport()
 }
 
+var (
+	chatNickStyle   = lipgloss.NewStyle().Bold(true)
+	chatSystemStyle = lipgloss.NewStyle().Faint(true)
+	chatActionStyle = lipgloss.NewStyle().Italic(true)
+	chatTsStyle     = lipgloss.NewStyle().Faint(true)
+	separatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	linkStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+)
+
 func (m *chatModel) refreshViewport() {
 	lines := m.messages[m.active]
 	var b strings.Builder
-	nickStyle := lipgloss.NewStyle().Bold(true)
-	systemStyle := lipgloss.NewStyle().Faint(true)
-	actionStyle := lipgloss.NewStyle().Italic(true)
-	tsStyle := lipgloss.NewStyle().Faint(true)
 
 	today := toDate(time.Now())
 	var prevDate time.Time
@@ -133,7 +138,7 @@ func (m *chatModel) refreshViewport() {
 				if b.Len() > 0 {
 					b.WriteByte('\n')
 				}
-				b.WriteString(renderSeparator(lipgloss.NewStyle().Foreground(lipgloss.Color("11")), label, m.width))
+				b.WriteString(renderSeparator(separatorStyle, label, m.width))
 			}
 		}
 		prevDate = lineDate
@@ -142,26 +147,26 @@ func (m *chatModel) refreshViewport() {
 			b.WriteByte('\n')
 		}
 
-		ts := tsStyle.Render(line.time.Format(m.timestampFormat)) + " "
+		ts := chatTsStyle.Render(line.time.Format(m.timestampFormat)) + " "
 
 		switch {
 		case line.system:
-			text := "-- " + line.content
+			text := "-- " + linkify(line.content)
 			wrapped := wordWrap(text, m.width-tsPrefixWidth)
 			wrapped = indent(wrapped, tsPrefixWidth)
-			b.WriteString(ts + systemStyle.Render(wrapped))
+			b.WriteString(ts + chatSystemStyle.Render(wrapped))
 		case line.action:
 			colored := format.NickColor(line.nick).Render(line.nick)
-			prefix := fmt.Sprintf("* %s ", colored)
+			prefix := "* " + colored + " "
 			prefixWidth := lipgloss.Width(prefix) + tsPrefixWidth
-			wrapped := wordWrap(line.content, m.width-prefixWidth)
+			wrapped := wordWrap(linkify(line.content), m.width-prefixWidth)
 			wrapped = indent(wrapped, prefixWidth)
-			b.WriteString(ts + actionStyle.Render(prefix+wrapped))
+			b.WriteString(ts + chatActionStyle.Render(prefix+wrapped))
 		default:
 			colored := format.NickColor(line.nick).Render(line.nick)
-			prefix := nickStyle.Render(colored) + " "
+			prefix := chatNickStyle.Render(colored) + " "
 			prefixWidth := lipgloss.Width(prefix) + tsPrefixWidth
-			wrapped := wordWrap(line.content, m.width-prefixWidth)
+			wrapped := wordWrap(linkify(line.content), m.width-prefixWidth)
 			wrapped = indent(wrapped, prefixWidth)
 			b.WriteString(ts + prefix + wrapped)
 		}
@@ -268,7 +273,13 @@ func splitTokens(line string) []string {
 }
 
 // hardBreak writes a word that exceeds width by splitting it across lines.
+// Words containing ANSI escape sequences (e.g. OSC 8 hyperlinks) are written
+// intact to avoid corrupting the sequences.
 func hardBreak(b *strings.Builder, word string, width, col int) int {
+	if strings.Contains(word, "\x1b") {
+		b.WriteString(word)
+		return col + lipgloss.Width(word)
+	}
 	for _, r := range word {
 		rw := lipgloss.Width(string(r))
 		if col+rw > width && col > 0 {
@@ -281,8 +292,47 @@ func hardBreak(b *strings.Builder, word string, width, col int) int {
 	return col
 }
 
+// linkify wraps URLs in OSC 8 hyperlink sequences so they're clickable
+// in terminals that support it, and applies underline styling for visibility.
+// Applied before word-wrapping; hardBreak skips words containing escape
+// sequences to avoid corrupting the hyperlink.
+func linkify(text string) string {
+	var b strings.Builder
+	remaining := text
+	for {
+		// Find the next URL start.
+		idx := strings.Index(remaining, "http://")
+		idxs := strings.Index(remaining, "https://")
+		if idx < 0 && idxs < 0 {
+			b.WriteString(remaining)
+			break
+		}
+		if idx < 0 || (idxs >= 0 && idxs < idx) {
+			idx = idxs
+		}
+
+		// Write everything before the URL.
+		b.WriteString(remaining[:idx])
+
+		// Find the end of the URL (next whitespace or end of string).
+		rest := remaining[idx:]
+		end := strings.IndexAny(rest, " \t\n")
+		if end < 0 {
+			end = len(rest)
+		}
+		url := rest[:end]
+
+		b.WriteString(termenv.Hyperlink(url, linkStyle.Render(url)))
+		remaining = rest[end:]
+	}
+	return b.String()
+}
+
 // indent prefixes all lines after the first with n spaces.
 func indent(text string, n int) string {
+	if !strings.Contains(text, "\n") {
+		return text
+	}
 	pad := strings.Repeat(" ", n)
 	lines := strings.Split(text, "\n")
 	for i := 1; i < len(lines); i++ {

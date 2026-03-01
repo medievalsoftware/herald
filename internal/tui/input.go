@@ -12,10 +12,6 @@ type inputModel struct {
 	textarea    textarea.Model
 	style       lipgloss.Style
 	commandMode bool // true = command (:), false = chat (>)
-
-	history []string // oldest first
-	histIdx int      // current position; len(history) means "new input"
-	draft   string   // unsaved text when user starts navigating history
 }
 
 func newInput() inputModel {
@@ -54,11 +50,15 @@ func (m *inputModel) syncHeight() {
 	m.textarea.SetHeight(lines)
 }
 
+// SetWidth updates the textarea width so wrapping is correct during Update.
+func (m *inputModel) SetWidth(width int) {
+	m.textarea.SetWidth(width)
+}
+
 func (m inputModel) View(width int) string {
 	if !m.textarea.Focused() {
 		return m.style.Width(width).Render("")
 	}
-	m.textarea.SetWidth(width)
 	return m.style.Width(width).Render(m.textarea.View())
 }
 
@@ -128,56 +128,5 @@ func (m *inputModel) Focused() bool {
 
 func (m *inputModel) SetValue(s string) {
 	m.textarea.SetValue(s)
-	// Move cursor to end.
 	m.textarea.CursorEnd()
-}
-
-// PushHistory records a submitted line. Resets the browsing position.
-func (m *inputModel) PushHistory(line string) {
-	if line == "" {
-		return
-	}
-	// Deduplicate consecutive entries.
-	if len(m.history) > 0 && m.history[len(m.history)-1] == line {
-		m.histIdx = len(m.history)
-		return
-	}
-	m.history = append(m.history, line)
-	m.histIdx = len(m.history)
-}
-
-// HistoryPrev moves to the previous history entry. Returns true if it moved.
-func (m *inputModel) HistoryPrev() bool {
-	if len(m.history) == 0 || m.histIdx <= 0 {
-		return false
-	}
-	// Save current text when leaving the draft position.
-	if m.histIdx == len(m.history) {
-		m.draft = m.textarea.Value()
-	}
-	m.histIdx--
-	m.textarea.SetValue(m.history[m.histIdx])
-	m.textarea.CursorEnd()
-	return true
-}
-
-// HistoryNext moves to the next history entry or restores the draft. Returns true if it moved.
-func (m *inputModel) HistoryNext() bool {
-	if m.histIdx >= len(m.history) {
-		return false
-	}
-	m.histIdx++
-	if m.histIdx == len(m.history) {
-		m.textarea.SetValue(m.draft)
-	} else {
-		m.textarea.SetValue(m.history[m.histIdx])
-	}
-	m.textarea.CursorEnd()
-	return true
-}
-
-// ResetHistory resets the browsing position without clearing history.
-func (m *inputModel) ResetHistory() {
-	m.histIdx = len(m.history)
-	m.draft = ""
 }

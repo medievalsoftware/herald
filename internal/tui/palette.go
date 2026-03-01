@@ -27,6 +27,11 @@ var commands = []Command{
 	{Name: "raw", Aliases: []string{"quote"}, Desc: "Send raw IRC command", Args: true},
 }
 
+var (
+	paletteSelStyle    = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("235")).Padding(0, 1)
+	paletteNormalStyle = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+)
+
 type paletteModel struct {
 	matches        []Command
 	selected       int
@@ -131,15 +136,8 @@ func (p *paletteModel) View(width int) string {
 		return ""
 	}
 
-	selStyle := lipgloss.NewStyle().
-		Bold(true).
-		Background(lipgloss.Color("235")).
-		Width(width).
-		Padding(0, 1)
-	normalStyle := lipgloss.NewStyle().
-		Faint(true).
-		Width(width).
-		Padding(0, 1)
+	selStyle := paletteSelStyle.Width(width)
+	normalStyle := paletteNormalStyle.Width(width)
 
 	show := len(p.matches)
 	if show > p.maxShow {

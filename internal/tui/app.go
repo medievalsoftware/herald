@@ -183,7 +183,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlC:
 		if m.input.Focused() && m.input.Value() != "" {
 			m.input.Reset()
-			m.input.ResetHistory()
 			m.input.Blur()
 			m.palette.Hide()
 			m.resize()
@@ -224,17 +223,11 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.palette.Prev()
 				return m, nil
 			}
-			m.input.HistoryPrev()
-			m.updatePalette()
-			return m, nil
 		case tea.KeyDown:
 			if m.palette.visible {
 				m.palette.Next()
 				return m, nil
 			}
-			m.input.HistoryNext()
-			m.updatePalette()
-			return m, nil
 		case tea.KeyTab:
 			if m.palette.visible {
 				if m.palette.completionMode {
@@ -275,7 +268,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleInput()
 		case tea.KeyEscape:
 			m.input.Reset()
-			m.input.ResetHistory()
 			m.input.Blur()
 			m.palette.Hide()
 			m.resize()
@@ -370,7 +362,6 @@ func (m *model) fillCompletion(name string) {
 func (m *model) handleInput() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
 	commandMode := m.input.CommandMode()
-	m.input.PushHistory(text)
 	m.input.Reset()
 	m.input.Blur()
 	m.palette.Hide()
@@ -751,6 +742,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) resize() {
+	m.input.SetWidth(m.width)
 	channelsHeight := 2 // tab bar + border
 	statusHeight := 1
 	inputHeight := 1 + m.input.LineCount() // border + textarea lines

@@ -17,22 +17,19 @@ func newStatus() statusModel {
 	return statusModel{}
 }
 
+var (
+	statusBarStyle    = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252")).Padding(0, 1)
+	statusNickStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	statusServerStyle = lipgloss.NewStyle().Faint(true)
+)
+
 func (m statusModel) View(width int) string {
-	style := lipgloss.NewStyle().
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Width(width).
-		Padding(0, 1)
-
-	nickStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
-	serverStyle := lipgloss.NewStyle().Faint(true)
-
-	left := nickStyle.Render(m.nick)
+	left := statusNickStyle.Render(m.nick)
 	if m.mode != "" {
 		left += " [+" + m.mode + "]"
 	}
 
-	right := serverStyle.Render(m.server)
+	right := statusServerStyle.Render(m.server)
 	if m.users > 0 {
 		right += fmt.Sprintf(" (%d users)", m.users)
 	}
@@ -43,5 +40,5 @@ func (m statusModel) View(width int) string {
 	}
 
 	content := left + fmt.Sprintf("%*s", gap, "") + right
-	return style.Render(content)
+	return statusBarStyle.Width(width).Render(content)
 }

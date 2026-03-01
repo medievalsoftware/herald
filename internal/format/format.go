@@ -17,25 +17,24 @@ func Strip(text string) string {
 	return ircfmt.Strip(text)
 }
 
+// nickStyles holds pre-computed styles for nick coloring.
+var nickStyles = func() [12]lipgloss.Style {
+	colors := [12]lipgloss.Color{
+		"1", "2", "3", "4", "5", "6",
+		"9", "10", "11", "12", "13", "14",
+	}
+	var styles [12]lipgloss.Style
+	for i, c := range colors {
+		styles[i] = lipgloss.NewStyle().Foreground(c)
+	}
+	return styles
+}()
+
 // NickColor returns a consistent lipgloss style for a nickname.
 func NickColor(nick string) lipgloss.Style {
 	h := 0
 	for _, c := range nick {
 		h = (h*31 + int(c)) & 0x7fffffff
 	}
-	colors := []lipgloss.Color{
-		lipgloss.Color("1"),
-		lipgloss.Color("2"),
-		lipgloss.Color("3"),
-		lipgloss.Color("4"),
-		lipgloss.Color("5"),
-		lipgloss.Color("6"),
-		lipgloss.Color("9"),
-		lipgloss.Color("10"),
-		lipgloss.Color("11"),
-		lipgloss.Color("12"),
-		lipgloss.Color("13"),
-		lipgloss.Color("14"),
-	}
-	return lipgloss.NewStyle().Foreground(colors[h%len(colors)])
+	return nickStyles[h%len(nickStyles)]
 }

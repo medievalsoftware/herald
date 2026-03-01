@@ -79,22 +79,22 @@ func (m *channelsModel) Tabs() []string {
 	return out
 }
 
-func (m channelsModel) View(width int) string {
-	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).
-		Background(lipgloss.Color("235")).Padding(0, 1)
-	inactiveStyle := lipgloss.NewStyle().Faint(true).Padding(0, 1)
+var (
+	channelActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).Background(lipgloss.Color("235")).Padding(0, 1)
+	channelInactiveStyle = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+	channelBarStyle      = lipgloss.NewStyle().BorderBottom(true).BorderStyle(lipgloss.NormalBorder())
+)
 
+func (m channelsModel) View(width int) string {
 	var parts []string
 	for i, tab := range m.tabs {
 		if i == m.active {
-			parts = append(parts, activeStyle.Render(tab))
+			parts = append(parts, channelActiveStyle.Render(tab))
 		} else {
-			parts = append(parts, inactiveStyle.Render(tab))
+			parts = append(parts, channelInactiveStyle.Render(tab))
 		}
 	}
 
 	bar := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
-	return lipgloss.NewStyle().Width(width).
-		BorderBottom(true).BorderStyle(lipgloss.NormalBorder()).
-		Render(bar)
+	return channelBarStyle.Width(width).Render(bar)
 }

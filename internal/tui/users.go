@@ -140,35 +140,28 @@ func (m usersModel) Update(msg tea.Msg) (usersModel, tea.Cmd) {
 	return m, cmd
 }
 
+var (
+	usersTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252")).Background(lipgloss.Color("235")).Padding(0, 1)
+	usersBorderStyle = lipgloss.NewStyle().BorderLeft(true).BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("240"))
+	usersNickStyle   = lipgloss.NewStyle().Padding(0, 1)
+	usersOpStyle     = lipgloss.NewStyle().Padding(0, 1).Foreground(lipgloss.Color("10"))
+	usersVoiceStyle  = lipgloss.NewStyle().Padding(0, 1).Foreground(lipgloss.Color("11"))
+)
+
 func (m usersModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("235")).
-		Width(m.width).
-		Padding(0, 1)
-
-	title := titleStyle.Render(fmt.Sprintf("Users (%d)", m.Count()))
-
-	border := lipgloss.NewStyle().
-		BorderLeft(true).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240"))
+	title := usersTitleStyle.Width(m.width).Render(fmt.Sprintf("Users (%d)", m.Count()))
 
 	content := title + "\n" + m.viewport.View()
-	return border.Render(content)
+	return usersBorderStyle.Render(content)
 }
 
 func (m *usersModel) refreshViewport() {
 	nicks := m.members[m.active]
 	var b strings.Builder
-	nickStyle := lipgloss.NewStyle().Padding(0, 1)
-	opStyle := nickStyle.Foreground(lipgloss.Color("10"))
-	voiceStyle := nickStyle.Foreground(lipgloss.Color("11"))
 
 	for i, nick := range nicks {
 		if i > 0 {
@@ -176,11 +169,11 @@ func (m *usersModel) refreshViewport() {
 		}
 		switch {
 		case strings.HasPrefix(nick, "@"):
-			b.WriteString(opStyle.Render(nick))
+			b.WriteString(usersOpStyle.Render(nick))
 		case strings.HasPrefix(nick, "+"):
-			b.WriteString(voiceStyle.Render(nick))
+			b.WriteString(usersVoiceStyle.Render(nick))
 		default:
-			b.WriteString(nickStyle.Render(nick))
+			b.WriteString(usersNickStyle.Render(nick))
 		}
 	}
 	m.viewport.SetContent(b.String())
