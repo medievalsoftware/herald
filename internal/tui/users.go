@@ -10,8 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const usersWidth = 20
-
 type usersModel struct {
 	members  map[string][]string // channel -> sorted nicks (with prefix @/+)
 	active   string
@@ -20,12 +18,12 @@ type usersModel struct {
 	viewport viewport.Model
 }
 
-func newUsers() usersModel {
+func newUsers(width int) usersModel {
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 	return usersModel{
 		members:  make(map[string][]string),
-		width:    usersWidth,
+		width:    width,
 		viewport: vp,
 	}
 }

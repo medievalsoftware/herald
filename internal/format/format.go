@@ -18,17 +18,26 @@ func Strip(text string) string {
 }
 
 // nickStyles holds pre-computed styles for nick coloring.
-var nickStyles = func() [12]lipgloss.Style {
-	colors := [12]lipgloss.Color{
-		"1", "2", "3", "4", "5", "6",
-		"9", "10", "11", "12", "13", "14",
-	}
-	var styles [12]lipgloss.Style
+var nickStyles = buildNickStyles([]string{
+	"1", "2", "3", "4", "5", "6",
+	"9", "10", "11", "12", "13", "14",
+})
+
+func buildNickStyles(colors []string) []lipgloss.Style {
+	styles := make([]lipgloss.Style, len(colors))
 	for i, c := range colors {
-		styles[i] = lipgloss.NewStyle().Foreground(c)
+		styles[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(c))
 	}
 	return styles
-}()
+}
+
+// SetNickColors rebuilds the nick color palette from the given color strings.
+func SetNickColors(colors []string) {
+	if len(colors) == 0 {
+		return
+	}
+	nickStyles = buildNickStyles(colors)
+}
 
 // NickColor returns a consistent lipgloss style for a nickname.
 func NickColor(nick string) lipgloss.Style {

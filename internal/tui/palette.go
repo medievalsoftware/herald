@@ -25,6 +25,8 @@ var commands = []Command{
 	{Name: "nick", Desc: "Change nickname", Args: true},
 	{Name: "quit", Aliases: []string{"exit", "q!"}, Desc: "Disconnect from server", Args: false},
 	{Name: "raw", Aliases: []string{"quote"}, Desc: "Send raw IRC command", Args: true},
+	{Name: "set", Desc: "Change a setting", Args: true},
+	{Name: "theme", Desc: "Switch color theme", Args: true},
 }
 
 var (

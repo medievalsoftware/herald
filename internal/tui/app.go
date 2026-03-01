@@ -61,7 +61,7 @@ func New(addr, nick string, cfg config.Config) *model {
 		chat:        newChat(cfg.Timestamp),
 		input:       newInput(),
 		status:      newStatus(),
-		users:       newUsers(),
+		users:       newUsers(cfg.UsersWidth),
 		palette:     newPalette(),
 		namesBuffer: make(map[string][]string),
 		batches:     make(map[string]*batchState),
@@ -330,6 +330,10 @@ func (m *model) updatePalette() {
 		m.palette.UpdateCompletions(partial, m.joinedChannels())
 	case "msg":
 		m.palette.UpdateCompletions(partial, m.knownNicks())
+	case "set":
+		m.palette.UpdateCompletions(partial, settingNames())
+	case "theme":
+		m.palette.UpdateCompletions(partial, config.AvailableThemes())
 	default:
 		m.palette.Hide()
 	}
@@ -348,6 +352,15 @@ func (m *model) joinedChannels() []string {
 
 func (m *model) knownNicks() []string {
 	return m.users.AllNicks()
+}
+
+func settingNames() []string {
+	settings := config.AvailableSettings()
+	names := make([]string, len(settings))
+	for i, s := range settings {
+		names[i] = s.Name
+	}
+	return names
 }
 
 // fillCompletion replaces the argument portion of input with the selected completion.
@@ -469,6 +482,68 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 
+	case "SET":
+		buf := m.channels.Active()
+		if args == "" {
+			for _, s := range config.AvailableSettings() {
+				val := m.config.Get(s.Name)
+				m.chat.AddSystemMessage(buf, fmt.Sprintf("%s = %s  (%s)", s.Name, val, s.Desc))
+			}
+			return m, nil
+		}
+		setParts := strings.SplitN(args, " ", 2)
+		key := setParts[0]
+		if len(setParts) == 1 {
+			val := m.config.Get(key)
+			if val == "" {
+				m.chat.AddSystemMessage(buf, "Unknown setting: "+key)
+			} else {
+				m.chat.AddSystemMessage(buf, key+" = "+val)
+			}
+			return m, nil
+		}
+		value := setParts[1]
+		if err := m.config.Set(key, value); err != nil {
+			m.chat.AddSystemMessage(buf, "Error: "+err.Error())
+			return m, nil
+		}
+		m.applySetting(key)
+		if err := m.config.Save(); err != nil {
+			m.chat.AddSystemMessage(buf, "Setting applied but failed to save: "+err.Error())
+			return m, nil
+		}
+		m.chat.AddSystemMessage(buf, key+" = "+value)
+
+	case "THEME":
+		buf := m.channels.Active()
+		if args == "" {
+			available := config.AvailableThemes()
+			if len(available) == 0 {
+				m.chat.AddSystemMessage(buf, "No themes found in "+config.ThemesDir())
+			} else {
+				m.chat.AddSystemMessage(buf, "Available themes: "+strings.Join(available, ", "))
+			}
+			current := m.config.Theme
+			if current == "" {
+				current = "(default)"
+			}
+			m.chat.AddSystemMessage(buf, "Current theme: "+current)
+			return m, nil
+		}
+		theme, err := config.LoadTheme(args)
+		if err != nil {
+			m.chat.AddSystemMessage(buf, "Error: "+err.Error())
+			return m, nil
+		}
+		ApplyTheme(theme)
+		m.config.Theme = args
+		if err := m.config.Save(); err != nil {
+			m.chat.AddSystemMessage(buf, "Theme applied but failed to save: "+err.Error())
+			return m, nil
+		}
+		m.chat.AddSystemMessage(buf, "Theme switched to "+args)
+		m.chat.refreshViewport()
+
 	case "RAW":
 		m.send(args)
 
@@ -480,6 +555,18 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		m.send(text)
 	}
 	return m, nil
+}
+
+// applySetting propagates a config change to the running TUI.
+func (m *model) applySetting(key string) {
+	switch key {
+	case "timestamp":
+		m.chat.timestampFormat = m.config.Timestamp
+		m.chat.refreshViewport()
+	case "users_width":
+		m.users.width = m.config.UsersWidth
+		m.resize()
+	}
 }
 
 func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
@@ -587,7 +674,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			m.channels.Add(channel)
 			m.switchChannel(m.channels.SetActive(channel))
 			if m.chathistorySupported {
-				m.send("CHATHISTORY LATEST " + channel + " * 100")
+				m.send(fmt.Sprintf("CHATHISTORY LATEST %s * %d", channel, m.config.HistoryLimit))
 			}
 		} else {
 			m.users.AddMember(channel, nick)
@@ -753,13 +840,13 @@ func (m *model) resize() {
 	}
 
 	if m.showUsers() {
-		panelWidth := usersWidth + 1
+		panelWidth := m.users.width + 1
 		chatWidth := m.width - panelWidth
 		if chatWidth < 1 {
 			chatWidth = 1
 		}
 		m.chat.SetSize(chatWidth, chatHeight)
-		m.users.SetSize(usersWidth, chatHeight)
+		m.users.SetSize(m.users.width, chatHeight)
 	} else {
 		m.chat.SetSize(m.width, chatHeight)
 	}
