@@ -99,6 +99,16 @@ func (m *chatModel) SetActive(channel string) {
 	m.refreshViewport()
 }
 
+// ScrollUp scrolls the viewport up by one page.
+func (m *chatModel) ScrollUp() {
+	m.viewport.PageUp()
+}
+
+// ScrollDown scrolls the viewport down by one page.
+func (m *chatModel) ScrollDown() {
+	m.viewport.PageDown()
+}
+
 // SetSize updates the viewport dimensions.
 func (m *chatModel) SetSize(width, height int) {
 	m.width = width

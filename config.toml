@@ -1,0 +1,74 @@
+# Herald IRC client configuration
+# Copy to ~/.config/herald/config.toml (or $XDG_CONFIG_HOME/herald/config.toml)
+
+# Time format for message timestamps (Go time format string).
+# See https://pkg.go.dev/time#pkg-constants for format reference.
+timestamp = "3:04 PM"
+
+# Width of the users panel in columns.
+users_width = 20
+
+# Number of messages to fetch from server history when joining a channel.
+history_limit = 100
+
+# Color theme name. Looks for <name>.toml in ~/.config/herald/themes/.
+# Leave empty or omit for built-in defaults.
+# theme = "gruvbox"
+
+# Key bindings use Helix-style notation:
+#   C-n  = Ctrl+N       A-left = Alt+Left
+#   ret  = Enter        esc    = Escape
+#   space = Space       tab    = Tab
+#   pgup = Page Up      pgdown = Page Down
+#
+# User overrides merge onto defaults — only specify keys you want to change.
+
+# Normal mode (when the input is not focused).
+# Default bindings:
+#   C-c       = quit             Quit or clear input
+#   C-n       = next_channel     Next channel tab
+#   C-p       = prev_channel     Previous channel tab
+#   A-right   = next_channel
+#   A-left    = prev_channel
+#   ret       = chat             Focus input in chat mode
+#   :         = command           Focus input in command mode
+#   pgup      = scroll_up        Scroll chat up
+#   pgdown    = scroll_down      Scroll chat down
+[keys.normal]
+# Examples:
+# "C-j" = "join"          # Ctrl+J opens :join command
+# "C-l" = "leave"         # Ctrl+L opens :leave command
+# "C-s" = "scroll_up"     # Ctrl+S scrolls up
+
+# Insert mode (when the input textarea is focused).
+# Default bindings:
+#   C-c  = cancel           Clear input and return to normal mode
+#   esc  = cancel
+#   ret  = submit           Submit input
+#   up   = palette_up       Navigate palette up
+#   down = palette_down     Navigate palette down
+#   tab  = palette_select   Select palette item
+[keys.insert]
+
+# Available actions:
+#   next_channel    Switch to next channel tab
+#   prev_channel    Switch to previous channel tab
+#   quit            Quit herald (or clear input if focused)
+#   chat            Focus input in chat mode
+#   command         Focus input in command mode
+#   cancel          Clear input and blur
+#   submit          Submit current input
+#   palette_up      Move palette selection up
+#   palette_down    Move palette selection down
+#   palette_select  Accept palette selection
+#   scroll_up       Scroll chat viewport up
+#   scroll_down     Scroll chat viewport down
+#   join            Open :join command
+#   leave           Open :leave command
+#   dm              Open :dm command
+#   me              Open :me command
+#   nick            Open :nick command
+#   theme           Open :theme command
+#   set             Open :set command
+#   raw             Open :raw command
+#   irc_quit        Send IRC QUIT and disconnect

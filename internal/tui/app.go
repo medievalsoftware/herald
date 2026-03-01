@@ -33,6 +33,7 @@ type model struct {
 	status   statusModel
 	users    usersModel
 	palette  paletteModel
+	keymap   KeyMap
 	width    int
 	height   int
 	quitting bool
@@ -53,6 +54,7 @@ type model struct {
 
 // New creates a new TUI model wired to connect to the given server.
 func New(addr, nick string, cfg config.Config) *model {
+	km := BuildKeyMap(cfg.Keys)
 	m := &model{
 		addr:        addr,
 		nick:        nick,
@@ -63,6 +65,7 @@ func New(addr, nick string, cfg config.Config) *model {
 		status:      newStatus(),
 		users:       newUsers(cfg.UsersWidth),
 		palette:     newPalette(),
+		keymap:      km,
 		namesBuffer: make(map[string][]string),
 		batches:     make(map[string]*batchState),
 	}
@@ -178,9 +181,43 @@ func (m *model) send(line string) {
 }
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Global bindings (both modes).
-	switch msg.Type {
-	case tea.KeyCtrlC:
+	keyStr := msg.String()
+
+	if m.input.Focused() {
+		// Insert mode.
+
+		// Alt+Enter / backslash-newline for soft newlines (hardcoded, not configurable).
+		if msg.Type == tea.KeyEnter && (msg.Alt || strings.HasSuffix(m.input.Value(), `\`)) {
+			if strings.HasSuffix(m.input.Value(), `\`) {
+				m.input.TrimTrailingChar()
+			}
+			m.input.InsertNewline()
+			m.resize()
+			return m, nil
+		}
+
+		if action, ok := m.keymap.Insert[keyStr]; ok {
+			return m.executeAction(action)
+		}
+
+		// Fall through to textarea update.
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		m.updatePalette()
+		m.resize()
+		return m, cmd
+	}
+
+	// Normal mode.
+	if action, ok := m.keymap.Normal[keyStr]; ok {
+		return m.executeAction(action)
+	}
+	return m, nil
+}
+
+func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
+	switch action {
+	case ActionQuit:
 		if m.input.Focused() && m.input.Value() != "" {
 			m.input.Reset()
 			m.input.Blur()
@@ -194,107 +231,123 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 
-	case tea.KeyCtrlN:
+	case ActionNextChannel:
 		m.switchChannel(m.channels.Next())
 		return m, nil
 
-	case tea.KeyCtrlP:
+	case ActionPrevChannel:
 		m.switchChannel(m.channels.Prev())
 		return m, nil
 
-	case tea.KeyLeft:
-		if msg.Alt {
-			m.switchChannel(m.channels.Prev())
-			return m, nil
-		}
-
-	case tea.KeyRight:
-		if msg.Alt {
-			m.switchChannel(m.channels.Next())
-			return m, nil
-		}
-	}
-
-	if m.input.Focused() {
-		// Insert mode.
-		switch msg.Type {
-		case tea.KeyUp:
-			if m.palette.visible {
-				m.palette.Prev()
-				return m, nil
-			}
-		case tea.KeyDown:
-			if m.palette.visible {
-				m.palette.Next()
-				return m, nil
-			}
-		case tea.KeyTab:
-			if m.palette.visible {
-				if m.palette.completionMode {
-					if name, ok := m.palette.SelectedName(); ok {
-						m.fillCompletion(name)
-					}
-				} else if cmd, ok := m.palette.Selected(); ok {
-					m.input.SetValue(cmd.Name + " ")
-					m.palette.Hide()
-					m.resize()
-				}
-				return m, nil
-			}
-		case tea.KeyEnter:
-			if msg.Alt || strings.HasSuffix(m.input.Value(), `\`) {
-				if strings.HasSuffix(m.input.Value(), `\`) {
-					m.input.TrimTrailingChar()
-				}
-				m.input.InsertNewline()
-				m.resize()
-				return m, nil
-			}
-			if m.palette.visible {
-				if m.palette.completionMode {
-					if name, ok := m.palette.SelectedName(); ok {
-						m.fillCompletion(name)
-						return m.handleInput()
-					}
-				} else if cmd, ok := m.palette.Selected(); ok {
-					m.input.SetValue(cmd.Name)
-					m.palette.Hide()
-					m.resize()
-					return m.handleInput()
-				}
-			}
-			m.palette.Hide()
-			m.resize()
-			return m.handleInput()
-		case tea.KeyEscape:
-			m.input.Reset()
-			m.input.Blur()
-			m.palette.Hide()
-			m.resize()
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		m.updatePalette()
-		m.resize()
-		return m, cmd
-	}
-
-	// Normal mode.
-	switch msg.Type {
-	case tea.KeyEnter:
+	case ActionChat:
 		m.input.SetCommandMode(false)
 		cmd := m.input.Focus()
 		return m, cmd
-	case tea.KeyRunes:
-		if msg.String() == ":" {
-			m.input.SetCommandMode(true)
-			cmd := m.input.Focus()
-			m.updatePalette()
-			return m, cmd
+
+	case ActionCommand:
+		m.input.SetCommandMode(true)
+		cmd := m.input.Focus()
+		m.updatePalette()
+		return m, cmd
+
+	case ActionCancel:
+		m.input.Reset()
+		m.input.Blur()
+		m.palette.Hide()
+		m.resize()
+		return m, nil
+
+	case ActionSubmit:
+		if m.palette.visible {
+			if m.palette.completionMode {
+				if name, ok := m.palette.SelectedName(); ok {
+					m.fillCompletion(name)
+					return m.handleInput()
+				}
+			} else if cmd, ok := m.palette.Selected(); ok {
+				m.input.SetValue(cmd.Name)
+				m.palette.Hide()
+				m.resize()
+				return m.handleInput()
+			}
 		}
+		m.palette.Hide()
+		m.resize()
+		return m.handleInput()
+
+	case ActionPaletteUp:
+		if m.palette.visible {
+			m.palette.Prev()
+		}
+		return m, nil
+
+	case ActionPaletteDown:
+		if m.palette.visible {
+			m.palette.Next()
+		}
+		return m, nil
+
+	case ActionPaletteSelect:
+		if m.palette.visible {
+			if m.palette.completionMode {
+				if name, ok := m.palette.SelectedName(); ok {
+					m.fillCompletion(name)
+				}
+			} else if cmd, ok := m.palette.Selected(); ok {
+				m.input.SetValue(cmd.Name + " ")
+				m.palette.Hide()
+				m.resize()
+			}
+		}
+		return m, nil
+
+	case ActionScrollUp:
+		m.chat.ScrollUp()
+		return m, nil
+
+	case ActionScrollDown:
+		m.chat.ScrollDown()
+		return m, nil
+
+	case ActionJoin:
+		return m.enterCommandWith("join ")
+
+	case ActionLeave:
+		return m.enterCommandWith("leave ")
+
+	case ActionDM:
+		return m.enterCommandWith("dm ")
+
+	case ActionMe:
+		return m.enterCommandWith("me ")
+
+	case ActionNick:
+		return m.enterCommandWith("nick ")
+
+	case ActionTheme:
+		return m.enterCommandWith("theme ")
+
+	case ActionSet:
+		return m.enterCommandWith("set ")
+
+	case ActionRaw:
+		return m.enterCommandWith("raw ")
+
+	case ActionIRCQuit:
+		return m.handleCommand("quit")
 	}
+
 	return m, nil
+}
+
+// enterCommandWith opens command input pre-filled with the given value.
+func (m *model) enterCommandWith(val string) (tea.Model, tea.Cmd) {
+	m.input.SetCommandMode(true)
+	cmd := m.input.Focus()
+	m.input.SetValue(val)
+	m.updatePalette()
+	m.resize()
+	return m, cmd
 }
 
 func (m *model) updatePalette() {
@@ -328,7 +381,7 @@ func (m *model) updatePalette() {
 		m.palette.UpdateCompletions(partial, m.availableChannels)
 	case "leave":
 		m.palette.UpdateCompletions(partial, m.joinedChannels())
-	case "msg":
+	case "dm":
 		m.palette.UpdateCompletions(partial, m.knownNicks())
 	case "set":
 		m.palette.UpdateCompletions(partial, settingNames())
@@ -443,7 +496,7 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 			m.switchChannel(m.channels.Active())
 		}
 
-	case "MSG":
+	case "DM":
 		msgParts := strings.SplitN(args, " ", 2)
 		if len(msgParts) < 2 {
 			m.chat.AddSystemMessage(m.channels.Active(), "Usage: :msg <target> <message>")

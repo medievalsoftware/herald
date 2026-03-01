@@ -47,12 +47,19 @@ func DefaultTheme() Theme {
 	}
 }
 
+// KeysConfig holds user key binding overrides in Helix notation.
+type KeysConfig struct {
+	Normal map[string]string `toml:"normal"`
+	Insert map[string]string `toml:"insert"`
+}
+
 // Config holds application configuration loaded from TOML.
 type Config struct {
-	Timestamp    string `toml:"timestamp"`
-	UsersWidth   int    `toml:"users_width"`
-	HistoryLimit int    `toml:"history_limit"`
-	Theme        string `toml:"theme,omitempty"`
+	Timestamp    string     `toml:"timestamp"`
+	UsersWidth   int        `toml:"users_width"`
+	HistoryLimit int        `toml:"history_limit"`
+	Theme        string     `toml:"theme,omitempty"`
+	Keys         KeysConfig `toml:"keys"`
 }
 
 // Load reads config from $XDG_CONFIG_HOME/herald/config.toml, falling back to

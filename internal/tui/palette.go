@@ -19,11 +19,11 @@ type Command struct {
 
 var commands = []Command{
 	{Name: "join", Aliases: []string{"j"}, Desc: "Join a channel", Args: true},
-	{Name: "leave", Aliases: []string{"part", "q"}, Desc: "Leave current channel", Args: true},
-	{Name: "msg", Aliases: []string{"m", "query"}, Desc: "Send a direct message", Args: true},
+	{Name: "leave", Aliases: []string{"part"}, Desc: "Leave current channel", Args: true},
+	{Name: "dm", Aliases: []string{"msg", "m", "query"}, Desc: "Send a direct message", Args: true},
 	{Name: "me", Aliases: []string{"action"}, Desc: "Send an action", Args: true},
 	{Name: "nick", Desc: "Change nickname", Args: true},
-	{Name: "quit", Aliases: []string{"exit", "q!"}, Desc: "Disconnect from server", Args: false},
+	{Name: "quit", Aliases: []string{"exit", "q", "q!"}, Desc: "Disconnect from server", Args: false},
 	{Name: "raw", Aliases: []string{"quote"}, Desc: "Send raw IRC command", Args: true},
 	{Name: "set", Desc: "Change a setting", Args: true},
 	{Name: "theme", Desc: "Switch color theme", Args: true},
