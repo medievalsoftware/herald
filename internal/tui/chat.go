@@ -99,6 +99,11 @@ func (m *chatModel) SetActive(channel string) {
 	m.refreshViewport()
 }
 
+// ClearHistory removes all stored messages for the given channel.
+func (m *chatModel) ClearHistory(channel string) {
+	delete(m.messages, channel)
+}
+
 // ScrollUp scrolls the viewport up by one page.
 func (m *chatModel) ScrollUp() {
 	m.viewport.PageUp()

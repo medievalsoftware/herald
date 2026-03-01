@@ -492,6 +492,7 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 			m.send("PART " + target)
 		} else {
 			// DM/query buffer — just close the tab locally.
+			m.chat.ClearHistory(target)
 			m.channels.Remove(target)
 			m.switchChannel(m.channels.Active())
 		}
@@ -747,6 +748,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			reason = " (" + msg.Params[1] + ")"
 		}
 		if strings.EqualFold(nick, m.nick) {
+			m.chat.ClearHistory(channel)
 			m.channels.Remove(channel)
 			m.switchChannel(m.channels.Active())
 		} else {
