@@ -1,4 +1,10 @@
-# Herald
+<div align="center">
+<picture>
+  <img alt="Herald" height="128" src="https://github.com/user-attachments/assets/7d8ab643-e6ea-4000-979a-221aed1b1b73">
+</picture>
+</div>
+
+# Herald 
 
 A terminal IRC client that connects over WebSocket.
 
