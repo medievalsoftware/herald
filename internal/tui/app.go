@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,6 +14,13 @@ import (
 )
 
 const serverBuffer = "*server*"
+
+// batchState tracks an in-progress IRCv3 BATCH.
+type batchState struct {
+	batchType string
+	target    string
+	messages  []client.IRCMsg
+}
 
 type model struct {
 	client   *client.Client
@@ -36,6 +44,11 @@ type model struct {
 	availableChannels []string
 	// listBuffer accumulates channel names from RPL_LIST (322) until RPL_LISTEND (323).
 	listBuffer []string
+
+	// batches tracks in-progress IRCv3 BATCH spans keyed by reference ID.
+	batches map[string]*batchState
+	// chathistorySupported is true when the server advertised draft/chathistory.
+	chathistorySupported bool
 }
 
 // New creates a new TUI model wired to connect to the given server.
@@ -51,6 +64,7 @@ func New(addr, nick string, cfg config.Config) *model {
 		users:       newUsers(),
 		palette:     newPalette(),
 		namesBuffer: make(map[string][]string),
+		batches:     make(map[string]*batchState),
 	}
 	m.status.server = addr
 	m.status.nick = nick
@@ -116,7 +130,12 @@ func (m *model) View() string {
 		return "Connecting..."
 	}
 
-	middle := lipgloss.JoinHorizontal(lipgloss.Top, m.chat.View(), m.users.View())
+	var middle string
+	if m.showUsers() {
+		middle = lipgloss.JoinHorizontal(lipgloss.Top, m.chat.View(), m.users.View())
+	} else {
+		middle = m.chat.View()
+	}
 
 	result := m.channels.View(m.width) + "\n" +
 		middle + "\n" +
@@ -136,6 +155,19 @@ func (m *model) SetProgram(p *tea.Program) {
 			p.Send(client.ErrorMsg{Err: err})
 		}
 	}()
+}
+
+// showUsers returns true when the users panel should be visible.
+func (m *model) showUsers() bool {
+	return isChannel(m.channels.Active())
+}
+
+// switchChannel activates the given channel tab and updates all dependent views.
+func (m *model) switchChannel(name string) {
+	m.chat.SetActive(name)
+	m.users.SetActive(name)
+	m.status.users = m.users.Count()
+	m.resize()
 }
 
 // send is a fire-and-forget IRC send; errors are non-fatal in the TUI context.
@@ -164,18 +196,24 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyCtrlN:
-		name := m.channels.Next()
-		m.chat.SetActive(name)
-		m.users.SetActive(name)
-		m.status.users = m.users.Count()
+		m.switchChannel(m.channels.Next())
 		return m, nil
 
 	case tea.KeyCtrlP:
-		name := m.channels.Prev()
-		m.chat.SetActive(name)
-		m.users.SetActive(name)
-		m.status.users = m.users.Count()
+		m.switchChannel(m.channels.Prev())
 		return m, nil
+
+	case tea.KeyLeft:
+		if msg.Alt {
+			m.switchChannel(m.channels.Prev())
+			return m, nil
+		}
+
+	case tea.KeyRight:
+		if msg.Alt {
+			m.switchChannel(m.channels.Next())
+			return m, nil
+		}
 	}
 
 	if m.input.Focused() {
@@ -361,6 +399,7 @@ func (m *model) sendChat(text string) (tea.Model, tea.Cmd) {
 		}
 		m.send("PRIVMSG " + target + " :" + line)
 		m.chat.AddMessage(target, m.nick, line)
+
 	}
 	return m, nil
 }
@@ -392,7 +431,13 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		if target == serverBuffer {
 			return m, nil
 		}
-		m.send("PART " + target)
+		if isChannel(target) {
+			m.send("PART " + target)
+		} else {
+			// DM/query buffer — just close the tab locally.
+			m.channels.Remove(target)
+			m.switchChannel(m.channels.Active())
+		}
 
 	case "MSG":
 		msgParts := strings.SplitN(args, " ", 2)
@@ -400,8 +445,11 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 			m.chat.AddSystemMessage(m.channels.Active(), "Usage: :msg <target> <message>")
 			return m, nil
 		}
-		m.send("PRIVMSG " + msgParts[0] + " :" + msgParts[1])
-		m.chat.AddMessage(msgParts[0], m.nick, msgParts[1])
+		target := msgParts[0]
+		m.send("PRIVMSG " + target + " :" + msgParts[1])
+		m.channels.Add(target)
+		m.switchChannel(m.channels.SetActive(target))
+		m.chat.AddMessage(target, m.nick, msgParts[1])
 
 	case "ME":
 		target := m.channels.Active()
@@ -433,6 +481,9 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 	case "RAW":
 		m.send(args)
 
+	case "TEST_HISTORY":
+		m.testHistory()
+
 	default:
 		// Send unknown commands as raw IRC.
 		m.send(text)
@@ -441,7 +492,39 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
+	// Accumulate messages that belong to an in-progress batch.
+	if ok, batchTag := msg.GetTag("batch"); ok {
+		if batch, exists := m.batches[batchTag]; exists {
+			batch.messages = append(batch.messages, msg)
+			return m, nil
+		}
+	}
+
 	switch msg.Command {
+	case "BATCH":
+		if len(msg.Params) < 1 {
+			return m, nil
+		}
+		ref := msg.Params[0]
+		if strings.HasPrefix(ref, "+") {
+			refID := ref[1:]
+			bs := &batchState{}
+			if len(msg.Params) >= 2 {
+				bs.batchType = msg.Params[1]
+			}
+			if len(msg.Params) >= 3 {
+				bs.target = msg.Params[2]
+			}
+			m.batches[refID] = bs
+		} else if strings.HasPrefix(ref, "-") {
+			refID := ref[1:]
+			if batch, ok := m.batches[refID]; ok {
+				delete(m.batches, refID)
+				m.finalizeBatch(batch)
+			}
+		}
+		return m, nil
+
 	case "PING":
 		arg := ""
 		if len(msg.Params) > 0 {
@@ -457,6 +540,11 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		text := msg.Params[1]
 		nick := parseNick(msg.Nick())
 
+		// Skip own messages — already displayed by the send path.
+		if strings.EqualFold(nick, m.nick) {
+			return m, nil
+		}
+
 		// CTCP ACTION.
 		if strings.HasPrefix(text, "\x01ACTION ") && strings.HasSuffix(text, "\x01") {
 			action := text[8 : len(text)-1]
@@ -465,7 +553,8 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 				target = nick
 			}
 			m.channels.Add(target)
-			m.chat.AddAction(target, nick, format.Strip(action))
+			stripped := format.Strip(action)
+			m.chat.AddAction(target, nick, stripped)
 			return m, nil
 		}
 
@@ -474,7 +563,8 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			target = nick
 		}
 		m.channels.Add(target)
-		m.chat.AddMessage(target, nick, format.Strip(text))
+		stripped := format.Strip(text)
+		m.chat.AddMessage(target, nick, stripped)
 
 	case "NOTICE":
 		if len(msg.Params) < 2 {
@@ -487,7 +577,14 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			target = msg.Params[0]
 			m.channels.Add(target)
 		}
-		m.chat.AddSystemMessage(target, fmt.Sprintf("[%s] %s", nick, format.Strip(text)))
+		stripped := format.Strip(text)
+		var content string
+		if strings.EqualFold(nick, "HistServ") {
+			content = stripped
+		} else {
+			content = fmt.Sprintf("[%s] %s", nick, stripped)
+		}
+		m.chat.AddSystemMessage(target, content)
 
 	case "JOIN":
 		if len(msg.Params) < 1 {
@@ -497,13 +594,15 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		nick := parseNick(msg.Nick())
 		if strings.EqualFold(nick, m.nick) {
 			m.channels.Add(channel)
-			name := m.channels.SetActive(channel)
-			m.chat.SetActive(name)
-			m.users.SetActive(name)
+			m.switchChannel(m.channels.SetActive(channel))
+			if m.chathistorySupported {
+				m.send("CHATHISTORY LATEST " + channel + " * 100")
+			}
 		} else {
 			m.users.AddMember(channel, nick)
+			joinContent := nick + " has joined " + channel
+			m.chat.AddSystemMessage(channel, joinContent)
 		}
-		m.chat.AddSystemMessage(channel, nick+" has joined "+channel)
 		m.status.users = m.users.Count()
 
 	case "PART":
@@ -518,12 +617,11 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.EqualFold(nick, m.nick) {
 			m.channels.Remove(channel)
-			active := m.channels.Active()
-			m.chat.SetActive(active)
-			m.users.SetActive(active)
+			m.switchChannel(m.channels.Active())
 		} else {
 			m.users.RemoveMember(channel, nick)
-			m.chat.AddSystemMessage(channel, nick+" has left "+channel+reason)
+			partContent := nick + " has left " + channel + reason
+			m.chat.AddSystemMessage(channel, partContent)
 		}
 		m.status.users = m.users.Count()
 
@@ -537,7 +635,8 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		for ch, nicks := range m.users.members {
 			for _, n := range nicks {
 				if strings.EqualFold(stripPrefix(n), nick) {
-					m.chat.AddSystemMessage(ch, nick+" has quit"+reason)
+					quitContent := nick + " has quit" + reason
+					m.chat.AddSystemMessage(ch, quitContent)
 					break
 				}
 			}
@@ -560,17 +659,19 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		}
 		m.users.RenameMember(oldNick, newNick)
 		// Show nick change in every channel the user is in.
+		nickContent := oldNick + " is now known as " + newNick
 		for ch, nicks := range m.users.members {
 			for _, n := range nicks {
 				if strings.EqualFold(stripPrefix(n), newNick) {
-					m.chat.AddSystemMessage(ch, oldNick+" is now known as "+newNick)
+					m.chat.AddSystemMessage(ch, nickContent)
 					break
 				}
 			}
 		}
 		// Fallback: if user isn't in any tracked channel, show in active buffer.
 		if len(m.users.members) == 0 {
-			m.chat.AddSystemMessage(m.channels.Active(), oldNick+" is now known as "+newNick)
+			active := m.channels.Active()
+			m.chat.AddSystemMessage(active, nickContent)
 		}
 
 	case "001": // RPL_WELCOME
@@ -578,6 +679,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			m.chat.AddSystemMessage(serverBuffer, msg.Params[1])
 		}
 		m.status.server = msg.Source
+		m.chathistorySupported = m.client.HasCap("chathistory") || m.client.HasCap("draft/chathistory")
 		m.send("LIST")
 
 	case "002", "003", "004": // Server info numerics.
@@ -658,15 +760,17 @@ func (m *model) resize() {
 		chatHeight = 1
 	}
 
-	// Users panel gets fixed width; the border adds 1 char.
-	panelWidth := usersWidth + 1
-	chatWidth := m.width - panelWidth
-	if chatWidth < 1 {
-		chatWidth = 1
+	if m.showUsers() {
+		panelWidth := usersWidth + 1
+		chatWidth := m.width - panelWidth
+		if chatWidth < 1 {
+			chatWidth = 1
+		}
+		m.chat.SetSize(chatWidth, chatHeight)
+		m.users.SetSize(usersWidth, chatHeight)
+	} else {
+		m.chat.SetSize(m.width, chatHeight)
 	}
-
-	m.chat.SetSize(chatWidth, chatHeight)
-	m.users.SetSize(usersWidth, chatHeight)
 }
 
 func parseNick(prefix string) string {
@@ -678,4 +782,127 @@ func parseNick(prefix string) string {
 
 func isChannel(s string) bool {
 	return len(s) > 0 && (s[0] == '#' || s[0] == '&')
+}
+
+// finalizeBatch dispatches a completed batch to the appropriate handler.
+func (m *model) finalizeBatch(batch *batchState) {
+	switch batch.batchType {
+	case "chathistory":
+		m.finalizeChatHistory(batch)
+	}
+}
+
+// finalizeChatHistory converts batch messages into chatLines and prepends them.
+func (m *model) finalizeChatHistory(batch *batchState) {
+	var lines []chatLine
+	for _, msg := range batch.messages {
+		nick := parseNick(msg.Nick())
+		t := parseServerTime(msg)
+
+		switch msg.Command {
+		case "PRIVMSG":
+			if len(msg.Params) < 2 {
+				continue
+			}
+			text := msg.Params[1]
+
+			// CTCP ACTION.
+			if strings.HasPrefix(text, "\x01ACTION ") && strings.HasSuffix(text, "\x01") {
+				content := format.Strip(text[8 : len(text)-1])
+				lines = append(lines, chatLine{nick: nick, content: content, time: t, action: true})
+				continue
+			}
+
+			lines = append(lines, chatLine{nick: nick, content: format.Strip(text), time: t})
+
+		case "NOTICE":
+			if len(msg.Params) < 2 {
+				continue
+			}
+			stripped := format.Strip(msg.Params[1])
+			var content string
+			if strings.EqualFold(nick, "HistServ") {
+				content = stripped
+			} else {
+				content = fmt.Sprintf("[%s] %s", nick, stripped)
+			}
+			lines = append(lines, chatLine{content: content, time: t, system: true})
+
+		case "JOIN":
+			if len(msg.Params) < 1 {
+				continue
+			}
+			lines = append(lines, chatLine{content: nick + " has joined " + msg.Params[0], time: t, system: true})
+
+		case "PART":
+			channel := batch.target
+			if len(msg.Params) >= 1 {
+				channel = msg.Params[0]
+			}
+			reason := ""
+			if len(msg.Params) > 1 {
+				reason = " (" + msg.Params[1] + ")"
+			}
+			lines = append(lines, chatLine{content: nick + " has left " + channel + reason, time: t, system: true})
+
+		case "QUIT":
+			reason := ""
+			if len(msg.Params) > 0 {
+				reason = " (" + msg.Params[0] + ")"
+			}
+			lines = append(lines, chatLine{content: nick + " has quit" + reason, time: t, system: true})
+
+		case "NICK":
+			if len(msg.Params) < 1 {
+				continue
+			}
+			lines = append(lines, chatLine{content: nick + " is now known as " + msg.Params[0], time: t, system: true})
+		}
+	}
+
+	if len(lines) > 0 {
+		m.chat.PrependMessages(batch.target, lines)
+	}
+}
+
+// testHistory injects fake chat history to preview day separators and formatting.
+func (m *model) testHistory() {
+	target := m.channels.Active()
+	if target == serverBuffer {
+		m.chat.AddSystemMessage(serverBuffer, "Join a channel first.")
+		return
+	}
+
+	now := time.Now()
+	threeDaysAgo := now.AddDate(0, 0, -3)
+	yesterday := now.AddDate(0, 0, -1)
+
+	lines := []chatLine{
+		{nick: "alice", content: "anyone around?", time: threeDaysAgo.Add(10 * time.Hour)},
+		{nick: "bob", content: "hey alice!", time: threeDaysAgo.Add(10*time.Hour + 5*time.Minute)},
+		{nick: "alice", content: "working on the new feature branch", time: threeDaysAgo.Add(10*time.Hour + 12*time.Minute)},
+		{nick: "charlie", content: "waves", time: yesterday.Add(9 * time.Hour), action: true},
+		{nick: "bob", content: "morning charlie", time: yesterday.Add(9*time.Hour + 1*time.Minute)},
+		{nick: "alice", content: "pushed the PR, take a look when you get a chance", time: yesterday.Add(14 * time.Hour)},
+		{nick: "charlie", content: "LGTM, just left a small comment", time: yesterday.Add(15*time.Hour + 30*time.Minute)},
+		{nick: "bob", content: "let's ship it today", time: now.Add(-2 * time.Hour)},
+		{nick: "alice", content: "merged!", time: now.Add(-1 * time.Hour)},
+	}
+
+	m.chat.PrependMessages(target, lines)
+}
+
+// parseServerTime extracts the server-time tag from an IRC message.
+func parseServerTime(msg client.IRCMsg) time.Time {
+	ok, val := msg.GetTag("time")
+	if !ok {
+		return time.Now()
+	}
+	if t, err := time.Parse(time.RFC3339Nano, val); err == nil {
+		return t.Local()
+	}
+	if t, err := time.Parse(time.RFC3339, val); err == nil {
+		return t.Local()
+	}
+	return time.Now()
 }
