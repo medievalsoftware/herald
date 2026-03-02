@@ -282,3 +282,7 @@ mise run fmt     # gofumpt
 mise run lint    # golangci-lint
 mise run test    # go test ./...
 ```
+
+## License
+
+[MPL 2.0](LICENSE)
