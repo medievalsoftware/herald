@@ -63,6 +63,13 @@ var rawCommands = []Command{
 	{Name: "KLINE", Desc: "KLINE [ANDKILL] [<duration>] <mask> [<reason>]"},
 	{Name: "DEFCON", Desc: "DEFCON [<level>]"},
 	{Name: "CHATHISTORY", Desc: "CHATHISTORY <subcommand> <target> <reference> <limit>"},
+	// Ergo services shorthand aliases.
+	{Name: "NS", Desc: "NS <command> [<args>...] — NickServ shorthand"},
+	{Name: "CS", Desc: "CS <command> [<args>...] — ChanServ shorthand"},
+	{Name: "NICKSERV", Desc: "NICKSERV <command> [<args>...] — Account management"},
+	{Name: "CHANSERV", Desc: "CHANSERV <command> [<args>...] — Channel management"},
+	{Name: "HOSTSERV", Desc: "HOSTSERV <command> [<args>...] — Virtual host management"},
+	{Name: "HISTSERV", Desc: "HISTSERV <command> [<args>...] — Message history management"},
 }
 
 var paletteBg = lipgloss.Color("235")
@@ -79,12 +86,21 @@ var (
 				Padding(0, 1)
 )
 
+// completionKind distinguishes palette display and fill behavior.
+type completionKind int
+
+const (
+	completionCommand    completionKind = iota // command name list (fill whole input)
+	completionArg                              // argument completion (fill last arg, no desc)
+	completionSubcommand                       // service subcommand (fill last arg, show desc)
+)
+
 type paletteModel struct {
-	matches        []Command
-	selected       int
-	visible        bool
-	completionMode bool
-	maxShow        int
+	matches  []Command
+	selected int
+	visible  bool
+	kind     completionKind
+	maxShow  int
 }
 
 func newPalette() paletteModel {
@@ -118,7 +134,18 @@ func (p *paletteModel) UpdateCompletions(filter string, items []string) {
 	}
 	p.selected = -1 // nothing selected until Tab
 	p.visible = len(p.matches) > 0
-	p.completionMode = true
+	p.kind = completionArg
+}
+
+// UpdateSubcommands filters service subcommands — shows descriptions but fills last arg.
+func (p *paletteModel) UpdateSubcommands(filter string, cmds []Command) {
+	p.updateWith(filter, cmds)
+	p.kind = completionSubcommand
+}
+
+// fillsLastArg reports whether the palette replaces the last arg (vs whole input).
+func (p *paletteModel) fillsLastArg() bool {
+	return p.kind != completionCommand
 }
 
 // SelectedName returns the Name of the selected item.
@@ -140,7 +167,7 @@ func (p *paletteModel) UpdateRaw(filter string) {
 }
 
 func (p *paletteModel) updateWith(filter string, cmds []Command) {
-	p.completionMode = false
+	p.kind = completionCommand
 	if filter == "" {
 		p.matches = cmds
 		p.selected = -1
@@ -194,7 +221,7 @@ func (p *paletteModel) gridLayout(width int) (numCols, numRows, colWidth int) {
 
 // renderDesc renders the description box for the selected item, or "" if none.
 func (p *paletteModel) renderDesc(width int) string {
-	if p.completionMode || len(p.matches) == 0 || p.selected < 0 {
+	if p.kind == completionArg || len(p.matches) == 0 || p.selected < 0 {
 		return ""
 	}
 	sel := p.matches[p.selected]

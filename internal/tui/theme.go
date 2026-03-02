@@ -36,5 +36,7 @@ func ApplyTheme(t config.Theme) {
 
 	inputNickStyle = inputNickStyle.Foreground(lipgloss.Color(t.Green))
 
+	notifyStyle = notifyStyle.Foreground(lipgloss.Color(t.Accent))
+
 	format.SetNickColors(t.Nicks)
 }

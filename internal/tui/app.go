@@ -16,6 +16,8 @@ import (
 
 const serverBuffer = "*server*"
 
+var notifyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Italic(true).PaddingLeft(1)
+
 // batchState tracks an in-progress IRCv3 BATCH.
 type batchState struct {
 	batchType string
@@ -51,6 +53,11 @@ type model struct {
 	batches map[string]*batchState
 	// chathistorySupported is true when the server advertised draft/chathistory.
 	chathistorySupported bool
+
+	// notifyLines holds service response messages displayed in the input area.
+	notifyLines []string
+	// expectService is the IRC nick we expect NOTICE responses from (e.g. "NickServ").
+	expectService string
 }
 
 // New creates a new TUI model wired to connect to the given server.
@@ -142,10 +149,14 @@ func (m *model) View() string {
 
 	result := m.channels.View(m.width) + "\n" +
 		middle + "\n"
-	if pv := m.palette.View(m.width); pv != "" {
-		result += pv + "\n"
+	if m.notificationActive() {
+		result += m.renderNotification(m.width)
+	} else {
+		if pv := m.palette.View(m.width); pv != "" {
+			result += pv + "\n"
+		}
+		result += m.input.View(m.width)
 	}
-	result += m.input.View(m.width)
 	return result
 }
 
@@ -243,17 +254,20 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ActionChat:
+		m.clearNotification()
 		m.input.SetCommandMode(false)
 		cmd := m.input.Focus()
 		return m, cmd
 
 	case ActionCommand:
+		m.clearNotification()
 		m.input.SetCommandMode(true)
 		cmd := m.input.Focus()
 		m.updatePalette()
 		return m, cmd
 
 	case ActionCancel:
+		m.clearNotification()
 		m.input.Reset()
 		m.input.Blur()
 		m.palette.Hide()
@@ -262,7 +276,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 
 	case ActionSubmit:
 		if m.palette.visible {
-			if m.palette.completionMode {
+			if m.palette.fillsLastArg() {
 				if name, ok := m.palette.SelectedName(); ok {
 					m.fillCompletion(name)
 					return m.handleInput()
@@ -327,6 +341,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 		return m.handleCommand("quit")
 
 	case ActionRawMode:
+		m.clearNotification()
 		m.input.SetMode(modeRaw)
 		cmd := m.input.Focus()
 		m.updatePalette()
@@ -338,6 +353,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 
 // enterCommandWith opens command input pre-filled with the given value.
 func (m *model) enterCommandWith(val string) (tea.Model, tea.Cmd) {
+	m.clearNotification()
 	m.input.SetCommandMode(true)
 	cmd := m.input.Focus()
 	m.input.SetValue(val)
@@ -374,6 +390,13 @@ func (m *model) updatePalette() {
 
 	// Find the command definition.
 	cmdName := fields[0]
+
+	// Check for service commands (NS, CS, NICKSERV, etc.) first.
+	if canonical, ok := isServiceCommand(cmdName); ok {
+		m.updateServicePalette(canonical, fields, val)
+		return
+	}
+
 	cmd, ok := findCommand(cmds, cmdName)
 	if !ok || len(cmd.Args) == 0 {
 		m.palette.Hide()
@@ -406,6 +429,63 @@ func (m *model) updatePalette() {
 	}
 
 	candidates := m.completionsFor(cmd.Args[argIdx])
+	if candidates == nil {
+		m.palette.Hide()
+		m.resize()
+		return
+	}
+	m.palette.UpdateCompletions(partial, candidates)
+	m.resize()
+}
+
+// updateServicePalette handles palette updates for service commands (NS, CHANSERV, etc.).
+func (m *model) updateServicePalette(service string, fields []string, val string) {
+	subcmds := serviceSubcommands[service]
+
+	// At subcommand position (e.g. "NS " or "NS IDE").
+	if len(fields) <= 2 && !strings.HasSuffix(val, " ") || len(fields) == 1 && strings.HasSuffix(val, " ") {
+		partial := ""
+		if len(fields) == 2 && !strings.HasSuffix(val, " ") {
+			partial = fields[1]
+		}
+		m.palette.UpdateSubcommands(partial, subcmds)
+		m.resize()
+		return
+	}
+
+	// Past the subcommand — look up its Args for arg completion.
+	if len(fields) < 2 {
+		m.palette.Hide()
+		m.resize()
+		return
+	}
+	subcmd, ok := findServiceSubcommand(service, fields[1])
+	if !ok || len(subcmd.Args) == 0 {
+		m.palette.Hide()
+		m.resize()
+		return
+	}
+
+	// Arg index: fields[0]=service, fields[1]=subcmd, fields[2..]=args.
+	var argIdx int
+	if strings.HasSuffix(val, " ") {
+		argIdx = len(fields) - 2
+	} else {
+		argIdx = len(fields) - 3
+	}
+
+	if argIdx < 0 || argIdx >= len(subcmd.Args) {
+		m.palette.Hide()
+		m.resize()
+		return
+	}
+
+	partial := ""
+	if !strings.HasSuffix(val, " ") && len(fields) > 2 {
+		partial = fields[len(fields)-1]
+	}
+
+	candidates := m.completionsFor(subcmd.Args[argIdx])
 	if candidates == nil {
 		m.palette.Hide()
 		m.resize()
@@ -493,7 +573,7 @@ func settingNames() []string {
 
 // fillFromPalette replaces the current arg in the input with the selected palette item.
 func (m *model) fillFromPalette() {
-	if m.palette.completionMode {
+	if m.palette.fillsLastArg() {
 		if name, ok := m.palette.SelectedName(); ok {
 			m.replaceLastArg(name)
 		}
@@ -524,6 +604,26 @@ func (m *model) replaceLastArg(name string) {
 	}
 }
 
+// clearNotification removes any pending service notification.
+func (m *model) clearNotification() {
+	m.notifyLines = nil
+	m.expectService = ""
+}
+
+// notificationActive returns true when a notification should be displayed.
+func (m *model) notificationActive() bool {
+	return len(m.notifyLines) > 0 && m.channels.Active() != serverBuffer && !m.input.Focused()
+}
+
+// renderNotification renders the service response notification for the input area.
+func (m *model) renderNotification(width int) string {
+	lines := m.notifyLines
+	if len(lines) > inputMaxHeight {
+		lines = lines[len(lines)-inputMaxHeight:]
+	}
+	return notifyStyle.Width(width).Render(strings.Join(lines, "\n"))
+}
+
 func (m *model) handleInput() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
 	mode := m.input.mode
@@ -543,6 +643,10 @@ func (m *model) handleInput() (tea.Model, tea.Cmd) {
 		return m.handleCommand(text)
 	case modeRaw:
 		m.send(text)
+		if sn := serviceNickFor(text); sn != "" {
+			m.notifyLines = nil
+			m.expectService = sn
+		}
 		return m, nil
 	default:
 		return m.sendChat(text)
@@ -709,6 +813,10 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 	default:
 		// Send unknown commands as raw IRC.
 		m.send(text)
+		if sn := serviceNickFor(text); sn != "" {
+			m.notifyLines = nil
+			m.expectService = sn
+		}
 	}
 	return m, nil
 }
@@ -812,6 +920,13 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			m.channels.Add(target)
 		}
 		stripped := format.Strip(text)
+
+		// Accumulate service responses for the input-area notification.
+		if m.expectService != "" && strings.EqualFold(nick, m.expectService) {
+			m.notifyLines = append(m.notifyLines, stripped)
+			m.resize()
+		}
+
 		var content string
 		if strings.EqualFold(nick, "HistServ") {
 			content = stripped
@@ -837,7 +952,6 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			joinContent := nick + " has joined " + channel
 			m.chat.AddSystemMessage(channel, joinContent)
 		}
-	
 
 	case "PART":
 		if len(msg.Params) < 1 {
@@ -858,7 +972,6 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			partContent := nick + " has left " + channel + reason
 			m.chat.AddSystemMessage(channel, partContent)
 		}
-	
 
 	case "QUIT":
 		nick := parseNick(msg.Nick())
@@ -877,7 +990,6 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.users.RemoveMemberAll(nick)
-	
 
 	case "NICK":
 		if len(msg.Params) < 1 {
@@ -956,7 +1068,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			if nicks, ok := m.namesBuffer[channel]; ok {
 				m.users.SetMembers(channel, nicks)
 				delete(m.namesBuffer, channel)
-			
+
 			}
 		}
 
@@ -988,9 +1100,16 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 func (m *model) resize() {
 	m.input.SetWidth(m.width)
 	channelsHeight := 2 // tab bar + border
-	inputHeight := m.input.LineCount()
-	paletteHeight := m.palette.Height(m.width)
-	chatHeight := m.height - channelsHeight - inputHeight - paletteHeight
+
+	var chatHeight int
+	if m.notificationActive() {
+		notifyH := min(len(m.notifyLines), inputMaxHeight)
+		chatHeight = m.height - channelsHeight - notifyH
+	} else {
+		inputHeight := m.input.LineCount()
+		paletteHeight := m.palette.Height(m.width)
+		chatHeight = m.height - channelsHeight - inputHeight - paletteHeight
+	}
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
