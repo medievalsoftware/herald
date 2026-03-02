@@ -1,8 +1,4 @@
-<div align="center">
-<picture>
-  <img alt="Herald" height="128" src="https://github.com/user-attachments/assets/7d8ab643-e6ea-4000-979a-221aed1b1b73">
-</picture>
-</div>
+<img width="128" height="128" alt="image" src="https://github.com/user-attachments/assets/f319ca63-1f07-4e6b-bf59-b63b3282f53b" />
 
 # Herald 
 
