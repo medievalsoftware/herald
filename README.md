@@ -4,7 +4,7 @@
 
 # Herald
 
-A terminal IRC client that connects over WebSocket.
+A terminal IRC client that connects over WebSocket. Built and tested against [Ergo](https://ergo.chat/) — features like SASL PLAIN, `chathistory`, and `server-time` reflect Ergo's IRCv3 support. Other servers may work but are untested.
 
 <img width="561" height="431" alt="image" src="https://github.com/user-attachments/assets/ce04c0fd-be4c-4571-a29b-ee469756ad0c" />
 
