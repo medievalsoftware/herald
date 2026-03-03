@@ -21,10 +21,11 @@ const (
 
 // Command describes an IRC command available in the palette.
 type Command struct {
-	Name    string
-	Aliases []string
-	Desc    string
-	Args    []ArgType // completion types for each positional argument
+	Name        string
+	Aliases     []string
+	Desc        string
+	Args        []ArgType // completion types for each positional argument
+	Subcommands []Command // nested sub-subcommands
 }
 
 var commands = []Command{

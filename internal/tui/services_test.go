@@ -125,6 +125,97 @@ func TestPaletteUpdateSubcommands(t *testing.T) {
 	})
 }
 
+func TestSubcommandChain(t *testing.T) {
+	t.Run("SUSPEND has subcommands", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "SUSPEND")
+		if !ok {
+			t.Fatal("SUSPEND not found")
+		}
+		if len(cmd.Subcommands) != 3 {
+			t.Fatalf("SUSPEND subcommands=%d, want 3", len(cmd.Subcommands))
+		}
+		names := map[string]bool{}
+		for _, sc := range cmd.Subcommands {
+			names[sc.Name] = true
+		}
+		for _, want := range []string{"ADD", "DEL", "LIST"} {
+			if !names[want] {
+				t.Errorf("missing subcommand %q", want)
+			}
+		}
+	})
+
+	t.Run("SUSPEND ADD has ArgNick", func(t *testing.T) {
+		cmd, _ := findServiceSubcommand("NICKSERV", "SUSPEND")
+		add, ok := findCommand(cmd.Subcommands, "ADD")
+		if !ok {
+			t.Fatal("ADD not found in SUSPEND subcommands")
+		}
+		if len(add.Args) != 1 || add.Args[0] != ArgNick {
+			t.Errorf("SUSPEND ADD args=%v, want [ArgNick]", add.Args)
+		}
+	})
+
+	t.Run("PURGE has subcommands with ArgChannel", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("CHANSERV", "PURGE")
+		if !ok {
+			t.Fatal("PURGE not found")
+		}
+		if len(cmd.Subcommands) != 3 {
+			t.Fatalf("PURGE subcommands=%d, want 3", len(cmd.Subcommands))
+		}
+		add, ok := findCommand(cmd.Subcommands, "ADD")
+		if !ok {
+			t.Fatal("ADD not found in PURGE subcommands")
+		}
+		if len(add.Args) != 1 || add.Args[0] != ArgChannel {
+			t.Errorf("PURGE ADD args=%v, want [ArgChannel]", add.Args)
+		}
+	})
+
+	t.Run("CERT has subcommands without args", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "CERT")
+		if !ok {
+			t.Fatal("CERT not found")
+		}
+		if len(cmd.Subcommands) != 3 {
+			t.Fatalf("CERT subcommands=%d, want 3", len(cmd.Subcommands))
+		}
+		for _, sc := range cmd.Subcommands {
+			if len(sc.Args) != 0 {
+				t.Errorf("CERT %s should have no args, got %v", sc.Name, sc.Args)
+			}
+		}
+	})
+
+	t.Run("CLIENTS has subcommands with optional ArgNick", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "CLIENTS")
+		if !ok {
+			t.Fatal("CLIENTS not found")
+		}
+		if len(cmd.Subcommands) != 2 {
+			t.Fatalf("CLIENTS subcommands=%d, want 2", len(cmd.Subcommands))
+		}
+		list, ok := findCommand(cmd.Subcommands, "LIST")
+		if !ok {
+			t.Fatal("LIST not found in CLIENTS subcommands")
+		}
+		if len(list.Args) != 1 || list.Args[0] != ArgNick {
+			t.Errorf("CLIENTS LIST args=%v, want [ArgNick]", list.Args)
+		}
+	})
+
+	t.Run("PUSH has subcommands", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "PUSH")
+		if !ok {
+			t.Fatal("PUSH not found")
+		}
+		if len(cmd.Subcommands) != 2 {
+			t.Fatalf("PUSH subcommands=%d, want 2", len(cmd.Subcommands))
+		}
+	})
+}
+
 func TestServiceNickFor(t *testing.T) {
 	tests := []struct {
 		name string

@@ -75,7 +75,18 @@ var serviceSubcommands = map[string][]Command{
 			"CERT examines or modifies the SHA-256 TLS certificate fingerprints that can\n" +
 			"be used to log into an account. CERT LIST lists the authorized fingerprints,\n" +
 			"CERT ADD <fingerprint> adds a new fingerprint, and CERT DEL <fingerprint>\n" +
-			"removes a fingerprint."},
+			"removes a fingerprint.", Subcommands: []Command{
+			{Name: "LIST", Desc: "List authorized fingerprints\n" +
+				"Syntax: CERT LIST [account]\n\n" +
+				"Lists the SHA-256 TLS certificate fingerprints authorized to log into\n" +
+				"your account (or the given account)."},
+			{Name: "ADD", Desc: "Add a new fingerprint\n" +
+				"Syntax: CERT ADD <fingerprint>\n\n" +
+				"Adds a new SHA-256 TLS certificate fingerprint to your account."},
+			{Name: "DEL", Desc: "Remove a fingerprint\n" +
+				"Syntax: CERT DEL <fingerprint>\n\n" +
+				"Removes a SHA-256 TLS certificate fingerprint from your account."},
+		}},
 		{Name: "CLIENTS", Desc: "List or logout sessions on your account\n" +
 			"Syntax: CLIENTS LIST [nickname]\n" +
 			"        CLIENTS LOGOUT [nickname] [client_id/all]\n\n" +
@@ -83,7 +94,17 @@ var serviceSubcommands = map[string][]Command{
 			"the server's multiclient functionality, to your nickname. An administrator\n" +
 			"can use this command to list another user's clients.\n\n" +
 			"CLIENTS LOGOUT detaches a single client, or all clients currently attached\n" +
-			"to your nickname."},
+			"to your nickname.", Subcommands: []Command{
+			{Name: "LIST", Desc: "List attached clients\n" +
+				"Syntax: CLIENTS LIST [nickname]\n\n" +
+				"Shows information about clients currently attached to your nickname via\n" +
+				"the server's multiclient functionality. An administrator can list another\n" +
+				"user's clients.", Args: []ArgType{ArgNick}},
+			{Name: "LOGOUT", Desc: "Detach a client session\n" +
+				"Syntax: CLIENTS LOGOUT [nickname] [client_id/all]\n\n" +
+				"Detaches a single client, or all clients currently attached to your\n" +
+				"nickname.", Args: []ArgType{ArgNick}},
+		}},
 		{Name: "SUSPEND", Desc: "Manage account suspensions\n" +
 			"Syntax: SUSPEND ADD <nickname> [DURATION duration] [reason]\n" +
 			"        SUSPEND DEL <nickname>\n" +
@@ -91,7 +112,18 @@ var serviceSubcommands = map[string][]Command{
 			"Suspending an account disables it (preventing new logins) and disconnects\n" +
 			"all associated clients. You can specify a time limit or a reason for\n" +
 			"the suspension. The DEL subcommand reverses a suspension, and the LIST\n" +
-			"command lists all current suspensions."},
+			"command lists all current suspensions.", Subcommands: []Command{
+			{Name: "ADD", Desc: "Suspend an account\n" +
+				"Syntax: SUSPEND ADD <nickname> [DURATION duration] [reason]\n\n" +
+				"Suspends the given account, disabling logins and disconnecting all\n" +
+				"associated clients. You can specify a time limit or a reason.", Args: []ArgType{ArgNick}},
+			{Name: "DEL", Desc: "Remove a suspension\n" +
+				"Syntax: SUSPEND DEL <nickname>\n\n" +
+				"Reverses a suspension, allowing the account to log in again.", Args: []ArgType{ArgNick}},
+			{Name: "LIST", Desc: "List current suspensions\n" +
+				"Syntax: SUSPEND LIST\n\n" +
+				"Lists all currently suspended accounts."},
+		}},
 		{Name: "RENAME", Desc: "Rename an account\n" +
 			"Syntax: RENAME <account> <newname>\n\n" +
 			"RENAME allows a server administrator to change the name of an account.\n" +
@@ -121,7 +153,14 @@ var serviceSubcommands = map[string][]Command{
 		{Name: "PUSH", Desc: "View or modify push subscriptions\n" +
 			"Syntax: PUSH LIST\n" +
 			"Or:     PUSH DELETE <endpoint>\n\n" +
-			"PUSH lets you view or modify the state of your push subscriptions."},
+			"PUSH lets you view or modify the state of your push subscriptions.", Subcommands: []Command{
+			{Name: "LIST", Desc: "List push subscriptions\n" +
+				"Syntax: PUSH LIST\n\n" +
+				"Lists your current push subscriptions."},
+			{Name: "DELETE", Desc: "Delete a push subscription\n" +
+				"Syntax: PUSH DELETE <endpoint>\n\n" +
+				"Deletes a push subscription by endpoint."},
+		}},
 		{Name: "SAGET", Desc: "Query another user's account settings\n" +
 			"Syntax: SAGET <account> <setting>\n\n" +
 			"SAGET queries the values of someone else's account settings. For more\n" +
@@ -221,16 +260,25 @@ var serviceSubcommands = map[string][]Command{
 				"then accept the transfer with TRANSFER accept #channel.",
 			Args: []ArgType{ArgChannel},
 		},
-		{
-			Name: "PURGE", Desc: "Blacklist a channel from the server\n" +
-				"Syntax: PURGE <ADD | DEL | LIST> #channel [code] [reason]\n\n" +
-				"PURGE ADD blacklists a channel from the server, making it impossible to join\n" +
-				"or otherwise interact with the channel. If the channel currently has members,\n" +
-				"they will be kicked from it. PURGE may also be applied preemptively to\n" +
-				"channels that do not currently have members. A purge can be undone with\n" +
-				"PURGE DEL. To list purged channels, use PURGE LIST.",
-			Args: []ArgType{ArgChannel},
-		},
+		{Name: "PURGE", Desc: "Blacklist a channel from the server\n" +
+			"Syntax: PURGE <ADD | DEL | LIST> #channel [code] [reason]\n\n" +
+			"PURGE ADD blacklists a channel from the server, making it impossible to join\n" +
+			"or otherwise interact with the channel. If the channel currently has members,\n" +
+			"they will be kicked from it. PURGE may also be applied preemptively to\n" +
+			"channels that do not currently have members. A purge can be undone with\n" +
+			"PURGE DEL. To list purged channels, use PURGE LIST.", Subcommands: []Command{
+			{Name: "ADD", Desc: "Blacklist a channel\n" +
+				"Syntax: PURGE ADD #channel [code] [reason]\n\n" +
+				"Blacklists a channel from the server, making it impossible to join or\n" +
+				"otherwise interact with the channel. If the channel currently has members,\n" +
+				"they will be kicked from it.", Args: []ArgType{ArgChannel}},
+			{Name: "DEL", Desc: "Remove a channel blacklist\n" +
+				"Syntax: PURGE DEL #channel\n\n" +
+				"Removes a purge, allowing the channel to be used again.", Args: []ArgType{ArgChannel}},
+			{Name: "LIST", Desc: "List purged channels\n" +
+				"Syntax: PURGE LIST\n\n" +
+				"Lists all currently purged channels."},
+		}},
 		{Name: "LIST", Desc: "Search registered channels\n" +
 			"Syntax: LIST [regex]\n\n" +
 			"LIST returns the list of registered channels, which match the given regex.\n" +

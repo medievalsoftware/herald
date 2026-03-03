@@ -439,53 +439,74 @@ func (m *model) updatePalette() {
 }
 
 // updateServicePalette handles palette updates for service commands (NS, CHANSERV, etc.).
+// It walks the command chain to arbitrary depth, showing subcommand or arg completions
+// at each level.
 func (m *model) updateServicePalette(service string, fields []string, val string) {
-	subcmds := serviceSubcommands[service]
+	cmds := serviceSubcommands[service]
+	trailing := strings.HasSuffix(val, " ")
+	pos := 1 // skip service name (fields[0])
 
-	// At subcommand position (e.g. "NS " or "NS IDE").
-	if len(fields) <= 2 && !strings.HasSuffix(val, " ") || len(fields) == 1 && strings.HasSuffix(val, " ") {
-		partial := ""
-		if len(fields) == 2 && !strings.HasSuffix(val, " ") {
-			partial = fields[1]
+	for {
+		// At typing position → show/filter subcommand palette.
+		if pos >= len(fields) || (pos == len(fields)-1 && !trailing) {
+			partial := ""
+			if pos < len(fields) {
+				partial = fields[pos]
+			}
+			m.palette.UpdateSubcommands(partial, cmds)
+			m.resize()
+			return
 		}
-		m.palette.UpdateSubcommands(partial, subcmds)
-		m.resize()
+
+		// Word at pos is complete → match it.
+		cmd, ok := findCommand(cmds, fields[pos])
+		if !ok {
+			m.palette.Hide()
+			m.resize()
+			return
+		}
+		pos++
+
+		// If matched command has subcommands, descend.
+		if len(cmd.Subcommands) > 0 {
+			cmds = cmd.Subcommands
+			continue
+		}
+
+		// Leaf command → arg completion.
+		m.completeServiceArgs(cmd, fields, pos, trailing)
 		return
 	}
+}
 
-	// Past the subcommand — look up its Args for arg completion.
-	if len(fields) < 2 {
+// completeServiceArgs handles argument completion for a leaf service subcommand.
+func (m *model) completeServiceArgs(cmd Command, fields []string, argStart int, trailing bool) {
+	if len(cmd.Args) == 0 {
 		m.palette.Hide()
 		m.resize()
 		return
 	}
-	subcmd, ok := findServiceSubcommand(service, fields[1])
-	if !ok || len(subcmd.Args) == 0 {
-		m.palette.Hide()
-		m.resize()
-		return
-	}
 
-	// Arg index: fields[0]=service, fields[1]=subcmd, fields[2..]=args.
+	argFields := len(fields) - argStart
 	var argIdx int
-	if strings.HasSuffix(val, " ") {
-		argIdx = len(fields) - 2
+	if trailing {
+		argIdx = argFields
 	} else {
-		argIdx = len(fields) - 3
+		argIdx = argFields - 1
 	}
 
-	if argIdx < 0 || argIdx >= len(subcmd.Args) {
+	if argIdx < 0 || argIdx >= len(cmd.Args) {
 		m.palette.Hide()
 		m.resize()
 		return
 	}
 
 	partial := ""
-	if !strings.HasSuffix(val, " ") && len(fields) > 2 {
+	if !trailing && len(fields) > argStart {
 		partial = fields[len(fields)-1]
 	}
 
-	candidates := m.completionsFor(subcmd.Args[argIdx])
+	candidates := m.completionsFor(cmd.Args[argIdx])
 	if candidates == nil {
 		m.palette.Hide()
 		m.resize()
