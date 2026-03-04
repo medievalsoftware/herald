@@ -194,6 +194,17 @@ func (m *model) send(line string) {
 	}
 }
 
+// sendRawWithNotify formats trailing args, sends the line, and sets up
+// service response notification if the line targets a service.
+func (m *model) sendRawWithNotify(text string) {
+	text = formatTrailingArg(text)
+	m.send(text)
+	if sn := serviceNickFor(text); sn != "" {
+		m.notifyLines = nil
+		m.expectService = sn
+	}
+}
+
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	keyStr := msg.String()
 
@@ -690,12 +701,7 @@ func (m *model) handleInput() (tea.Model, tea.Cmd) {
 	case modeCommand:
 		return m.handleCommand(text)
 	case modeRaw:
-		text = formatTrailingArg(text)
-		m.send(text)
-		if sn := serviceNickFor(text); sn != "" {
-			m.notifyLines = nil
-			m.expectService = sn
-		}
+		m.sendRawWithNotify(text)
 		return m, nil
 	default:
 		return m.sendChat(text)
@@ -861,12 +867,7 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 
 	default:
 		// Send unknown commands as raw IRC.
-		text = formatTrailingArg(text)
-		m.send(text)
-		if sn := serviceNickFor(text); sn != "" {
-			m.notifyLines = nil
-			m.expectService = sn
-		}
+		m.sendRawWithNotify(text)
 	}
 	return m, nil
 }
@@ -1271,10 +1272,7 @@ func formatTrailingArg(line string) string {
 		trailing = ":" + trailing
 	}
 
-	parts := make([]string, 0, trailingStart+1)
-	parts = append(parts, fields[:trailingStart]...)
-	parts = append(parts, trailing)
-	return strings.Join(parts, " ")
+	return strings.Join(fields[:trailingStart], " ") + " " + trailing
 }
 
 // finalizeBatch dispatches a completed batch to the appropriate handler.

@@ -4,6 +4,33 @@ import (
 	"testing"
 )
 
+func TestFormatTrailingArg(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty input", "", ""},
+		{"unknown command", "FAKECMD #chan hello", "FAKECMD #chan hello"},
+		{"no syntax", "MOTD", "MOTD"},
+		{"no excess args", "TOPIC #general", "TOPIC #general"},
+		{"trailing joined", "TOPIC #general Hello, world!", "TOPIC #general :Hello, world!"},
+		{"already prefixed", "TOPIC #general :Already prefixed", "TOPIC #general :Already prefixed"},
+		{"multi-arg trailing", "KICK #chan user bad behavior", "KICK #chan user :bad behavior"},
+		{"last token not string", "INVITE nick #chan extra", "INVITE nick #chan extra"},
+		{"lowercase command", "topic #general Hello world", "topic #general :Hello world"},
+		{"service no excess", "NS IDENTIFY myuser mypass", "NS IDENTIFY myuser mypass"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatTrailingArg(tt.input)
+			if got != tt.want {
+				t.Errorf("formatTrailingArg(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExpandEnvBraces(t *testing.T) {
 	t.Setenv("FOO", "bar")
 	t.Setenv("IRC_PASS", "secret123")
