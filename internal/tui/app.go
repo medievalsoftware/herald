@@ -690,6 +690,7 @@ func (m *model) handleInput() (tea.Model, tea.Cmd) {
 	case modeCommand:
 		return m.handleCommand(text)
 	case modeRaw:
+		text = formatTrailingArg(text)
 		m.send(text)
 		if sn := serviceNickFor(text); sn != "" {
 			m.notifyLines = nil
@@ -860,6 +861,7 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 
 	default:
 		// Send unknown commands as raw IRC.
+		text = formatTrailingArg(text)
 		m.send(text)
 		if sn := serviceNickFor(text); sn != "" {
 			m.notifyLines = nil
@@ -1202,6 +1204,77 @@ func expandEnvBraces(s string) string {
 
 func isChannel(s string) bool {
 	return len(s) > 0 && (s[0] == '#' || s[0] == '&')
+}
+
+// resolveRawCommand resolves fields to a Command definition by checking
+// service subcommand chains first, then rawCommands.
+// Returns the matched command and the number of leading fields consumed.
+func resolveRawCommand(fields []string) (*Command, int) {
+	if len(fields) == 0 {
+		return nil, 0
+	}
+
+	// Check service commands first (they need chain walking).
+	if canonical, ok := isServiceCommand(fields[0]); ok {
+		cmds := serviceSubcommands[canonical]
+		pos := 1
+		for pos < len(fields) {
+			cmd, ok := findCommand(cmds, fields[pos])
+			if !ok {
+				return nil, 0
+			}
+			pos++
+			if len(cmd.Subcommands) > 0 {
+				cmds = cmd.Subcommands
+				continue
+			}
+			return &cmd, pos
+		}
+		return nil, 0
+	}
+
+	// Check rawCommands.
+	if cmd, ok := findCommand(rawCommands, fields[0]); ok {
+		return &cmd, 1
+	}
+
+	return nil, 0
+}
+
+// formatTrailingArg auto-joins excess arguments into a colon-prefixed trailing
+// parameter when the last Syntax token is a string type (:string).
+func formatTrailingArg(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return line
+	}
+
+	cmd, prefixCount := resolveRawCommand(fields)
+	if cmd == nil || len(cmd.Syntax) == 0 {
+		return line
+	}
+
+	lastToken := cmd.Syntax[len(cmd.Syntax)-1]
+	if !strings.Contains(lastToken, ":string") {
+		return line
+	}
+
+	expected := prefixCount + len(cmd.Syntax)
+	if len(fields) <= expected {
+		return line
+	}
+
+	// Join everything from the last syntax token's position onward.
+	trailingStart := expected - 1
+	trailing := strings.Join(fields[trailingStart:], " ")
+	if !strings.HasPrefix(trailing, ":") {
+		trailing = ":" + trailing
+	}
+
+	parts := make([]string, 0, trailingStart+1)
+	parts = append(parts, fields[:trailingStart]...)
+	parts = append(parts, trailing)
+	return strings.Join(parts, " ")
 }
 
 // finalizeBatch dispatches a completed batch to the appropriate handler.
