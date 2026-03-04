@@ -32,7 +32,8 @@ type Command struct {
 var commands = []Command{
 	{Name: "join", Aliases: []string{"j"}, Desc: "Join a channel", Args: []ArgType{ArgChannel}, Syntax: []string{"<channel:channel>"}},
 	{Name: "leave", Aliases: []string{"part"}, Desc: "Leave current channel", Args: []ArgType{ArgChannel}, Syntax: []string{"[channel:channel]"}},
-	{Name: "dm", Aliases: []string{"msg", "m", "query"}, Desc: "Send a direct message", Args: []ArgType{ArgNick}, Syntax: []string{"<nick:nick>", "<message:string>"}},
+	{Name: "msg", Aliases: []string{"m", "query"}, Desc: "Send a direct message", Args: []ArgType{ArgNick}, Syntax: []string{"<nick:nick>", "<message:string>"}},
+	{Name: "open", Aliases: []string{"o"}, Desc: "Open a channel or nick", Args: []ArgType{ArgTarget}, Syntax: []string{"<target:channel|nick>"}},
 	{Name: "me", Aliases: []string{"action"}, Desc: "Send an action", Syntax: []string{"<action:string>"}},
 	{Name: "nick", Desc: "Change nickname", Syntax: []string{"<nickname:string>"}},
 	{Name: "quit", Aliases: []string{"exit", "q", "q!"}, Desc: "Disconnect from server", Syntax: []string{"[reason:string]"}},

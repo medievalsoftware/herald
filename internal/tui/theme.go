@@ -34,6 +34,8 @@ func ApplyTheme(t config.Theme) {
 		Foreground(lipgloss.Color(t.Accent)).
 		Background(lipgloss.Color(t.BarBg))
 
+	channelActivityStyle = channelActivityStyle.Foreground(lipgloss.Color(t.Yellow))
+
 	inputNickStyle = inputNickStyle.Foreground(lipgloss.Color(t.Green))
 
 	topicBarStyle = topicBarStyle.Background(lipgloss.Color(t.BarBg))

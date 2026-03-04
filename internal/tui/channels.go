@@ -7,16 +7,28 @@ import (
 )
 
 type channelsModel struct {
-	tabs    []string
-	display map[string]string // optional display overrides
-	active  int
+	tabs     []string
+	display  map[string]string // optional display overrides
+	active   int
+	activity map[string]bool // tabs with unread activity
 }
 
 func newChannels() channelsModel {
 	return channelsModel{
-		tabs:    []string{serverBuffer},
-		display: make(map[string]string),
+		tabs:     []string{serverBuffer},
+		display:  make(map[string]string),
+		activity: make(map[string]bool),
 	}
+}
+
+// MarkActivity flags a tab as having unread activity.
+func (m *channelsModel) MarkActivity(name string) {
+	m.activity[name] = true
+}
+
+// ClearActivity removes the unread activity flag from a tab.
+func (m *channelsModel) ClearActivity(name string) {
+	delete(m.activity, name)
 }
 
 // SetDisplay sets a display name override for a tab key.
@@ -89,6 +101,7 @@ func (m *channelsModel) Tabs() []string {
 var (
 	channelActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).Background(lipgloss.Color("235")).Padding(0, 1)
 	channelInactiveStyle = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+	channelActivityStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11")).Padding(0, 1)
 	channelBarStyle      = lipgloss.NewStyle().BorderBottom(true).BorderStyle(lipgloss.NormalBorder())
 )
 
@@ -101,6 +114,8 @@ func (m channelsModel) View(width int) string {
 		}
 		if i == m.active {
 			parts = append(parts, channelActiveStyle.Render(label))
+		} else if m.activity[tab] {
+			parts = append(parts, channelActivityStyle.Render(label))
 		} else {
 			parts = append(parts, channelInactiveStyle.Render(label))
 		}

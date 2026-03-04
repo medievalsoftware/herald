@@ -211,6 +211,7 @@ func (m *model) showUsers() bool {
 
 // switchChannel activates the given channel tab and updates all dependent views.
 func (m *model) switchChannel(name string) {
+	m.channels.ClearActivity(name)
 	m.chat.SetActive(name)
 	m.users.SetActive(name)
 
@@ -363,8 +364,11 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 	case ActionLeave:
 		return m.enterCommandWith("leave ")
 
-	case ActionDM:
-		return m.enterCommandWith("dm ")
+	case ActionMsg:
+		return m.enterCommandWith("msg ")
+
+	case ActionOpen:
+		return m.enterCommandWith("open ")
 
 	case ActionMe:
 		return m.enterCommandWith("me ")
@@ -791,7 +795,7 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 			m.switchChannel(m.channels.Active())
 		}
 
-	case "DM":
+	case "MSG":
 		msgParts := strings.SplitN(args, " ", 2)
 		if len(msgParts) < 2 {
 			m.chat.AddSystemMessage(m.channels.Active(), "Usage: :msg <target> <message>")
@@ -802,6 +806,14 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		m.channels.Add(target)
 		m.switchChannel(m.channels.SetActive(target))
 		m.chat.AddMessage(target, m.nick, msgParts[1])
+
+	case "OPEN":
+		if args == "" {
+			m.chat.AddSystemMessage(m.channels.Active(), "Usage: :open <target>")
+			return m, nil
+		}
+		m.channels.Add(args)
+		m.switchChannel(m.channels.SetActive(args))
 
 	case "ME":
 		target := m.channels.Active()
@@ -995,6 +1007,9 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			m.channels.Add(target)
 			stripped := format.Strip(action)
 			m.chat.AddAction(target, nick, stripped)
+			if target != m.channels.Active() {
+				m.channels.MarkActivity(target)
+			}
 			return m, nil
 		}
 
@@ -1005,6 +1020,9 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		m.channels.Add(target)
 		stripped := format.Strip(text)
 		m.chat.AddMessage(target, nick, stripped)
+		if target != m.channels.Active() {
+			m.channels.MarkActivity(target)
+		}
 
 	case "NOTICE":
 		if len(msg.Params) < 2 {
