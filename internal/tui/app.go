@@ -16,7 +16,10 @@ import (
 
 const serverBuffer = "*server*"
 
-var notifyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Italic(true).PaddingLeft(1)
+var (
+	notifyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Italic(true).PaddingLeft(1)
+	topicBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("235")).Padding(0, 1)
+)
 
 // batchState tracks an in-progress IRCv3 BATCH.
 type batchState struct {
@@ -54,6 +57,9 @@ type model struct {
 	// chathistorySupported is true when the server advertised draft/chathistory.
 	chathistorySupported bool
 
+	// topics stores the current topic for each channel.
+	topics map[string]string
+
 	// notifyLines holds service response messages displayed in the input area.
 	notifyLines []string
 	// expectService is the IRC nick we expect NOTICE responses from (e.g. "NickServ").
@@ -75,6 +81,7 @@ func New(addr, nick, pass string, cfg config.Config) *model {
 		palette:     newPalette(),
 		keymap:      km,
 		namesBuffer: make(map[string][]string),
+		topics:      make(map[string]string),
 		batches:     make(map[string]*batchState),
 	}
 	m.input.nick = nick
@@ -140,11 +147,21 @@ func (m *model) View() string {
 		return "Connecting..."
 	}
 
+	chatWidth := m.width
+	if m.showUsers() {
+		chatWidth = m.width - m.users.width - 1
+	}
+
+	chatView := m.chat.View()
+	if tv := m.topicView(chatWidth); tv != "" {
+		chatView = tv + "\n" + chatView
+	}
+
 	var middle string
 	if m.showUsers() {
-		middle = lipgloss.JoinHorizontal(lipgloss.Top, m.chat.View(), m.users.View())
+		middle = lipgloss.JoinHorizontal(lipgloss.Top, chatView, m.users.View())
 	} else {
-		middle = m.chat.View()
+		middle = chatView
 	}
 
 	result := m.channels.View(m.width) + "\n" +
@@ -172,6 +189,19 @@ func (m *model) SetProgram(p *tea.Program) {
 			p.Send(client.ErrorMsg{Err: err})
 		}
 	}()
+}
+
+// topicView returns the rendered topic bar for the active channel, or "" if none.
+func (m *model) topicView(width int) string {
+	active := m.channels.Active()
+	if active == serverBuffer {
+		return ""
+	}
+	topic := m.topics[active]
+	if topic == "" {
+		return ""
+	}
+	return topicBarStyle.Width(width).Render(topic)
 }
 
 // showUsers returns true when the users panel should be visible.
@@ -862,6 +892,23 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		m.chat.AddSystemMessage(buf, "Theme switched to "+args)
 		m.chat.refreshViewport()
 
+	case "TOPIC":
+		target := m.channels.Active()
+		if target == serverBuffer || !isChannel(target) {
+			m.chat.AddSystemMessage(m.channels.Active(), "Join a channel first")
+			return m, nil
+		}
+		if args == "" {
+			// Show current topic.
+			if topic, ok := m.topics[target]; ok && topic != "" {
+				m.chat.AddSystemMessage(target, "Topic: "+topic)
+			} else {
+				m.chat.AddSystemMessage(target, "No topic set")
+			}
+			return m, nil
+		}
+		m.send("TOPIC " + target + " :" + args)
+
 	case "TEST_HISTORY":
 		m.testHistory()
 
@@ -1016,6 +1063,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.EqualFold(nick, m.nick) {
 			m.chat.ClearHistory(channel)
+			delete(m.topics, channel)
 			m.channels.Remove(channel)
 			m.switchChannel(m.channels.Active())
 		} else {
@@ -1072,6 +1120,22 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			m.chat.AddSystemMessage(active, nickContent)
 		}
 
+	case "TOPIC":
+		if len(msg.Params) < 1 {
+			return m, nil
+		}
+		channel := msg.Params[0]
+		nick := parseNick(msg.Nick())
+		if len(msg.Params) >= 2 && msg.Params[1] != "" {
+			topic := format.Strip(msg.Params[1])
+			m.topics[channel] = topic
+			m.chat.AddSystemMessage(channel, nick+" changed the topic: "+topic)
+		} else {
+			delete(m.topics, channel)
+			m.chat.AddSystemMessage(channel, nick+" cleared the topic")
+		}
+		m.resize()
+
 	case "001": // RPL_WELCOME
 		if len(msg.Params) > 1 {
 			m.chat.AddSystemMessage(serverBuffer, msg.Params[1])
@@ -1103,7 +1167,9 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		if len(msg.Params) >= 3 {
 			channel := msg.Params[1]
 			topic := msg.Params[2]
+			m.topics[channel] = format.Strip(topic)
 			m.chat.AddSystemMessage(channel, "Topic: "+format.Strip(topic))
+			m.resize()
 		}
 
 	case "353": // RPL_NAMREPLY
@@ -1152,29 +1218,41 @@ func (m *model) resize() {
 	m.input.SetWidth(m.width)
 	channelsHeight := 2 // tab bar + border
 
-	var chatHeight int
+	chatWidth := m.width
+	if m.showUsers() {
+		chatWidth = m.width - m.users.width - 1
+		if chatWidth < 1 {
+			chatWidth = 1
+		}
+	}
+
+	topicHeight := 0
+	if tv := m.topicView(chatWidth); tv != "" {
+		topicHeight = lipgloss.Height(tv) + 1 // +1 for newline
+	}
+
+	var middleHeight int
 	if m.notificationActive() {
 		notifyH := min(len(m.notifyLines), inputMaxHeight)
-		chatHeight = m.height - channelsHeight - notifyH
+		middleHeight = m.height - channelsHeight - notifyH
 	} else {
 		inputHeight := m.input.LineCount()
 		paletteHeight := m.palette.Height(m.width)
-		chatHeight = m.height - channelsHeight - inputHeight - paletteHeight
+		middleHeight = m.height - channelsHeight - inputHeight - paletteHeight
 	}
+
+	chatHeight := middleHeight - topicHeight
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
 
+	m.chat.SetSize(chatWidth, chatHeight)
 	if m.showUsers() {
-		panelWidth := m.users.width + 1
-		chatWidth := m.width - panelWidth
-		if chatWidth < 1 {
-			chatWidth = 1
+		usersHeight := middleHeight
+		if usersHeight < 1 {
+			usersHeight = 1
 		}
-		m.chat.SetSize(chatWidth, chatHeight)
-		m.users.SetSize(m.users.width, chatHeight)
-	} else {
-		m.chat.SetSize(m.width, chatHeight)
+		m.users.SetSize(m.users.width, usersHeight)
 	}
 }
 

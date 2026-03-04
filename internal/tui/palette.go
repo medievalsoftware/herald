@@ -38,6 +38,7 @@ var commands = []Command{
 	{Name: "quit", Aliases: []string{"exit", "q", "q!"}, Desc: "Disconnect from server", Syntax: []string{"[reason:string]"}},
 	{Name: "set", Desc: "Change a setting", Args: []ArgType{ArgSetting}, Syntax: []string{"<setting:setting>", "[value:string]"}},
 	{Name: "theme", Desc: "Switch color theme", Args: []ArgType{ArgTheme}, Syntax: []string{"<name:theme>"}},
+	{Name: "topic", Desc: "Set or view channel topic", Syntax: []string{"[topic:string]"}},
 }
 
 var rawCommands = []Command{
