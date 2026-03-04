@@ -363,6 +363,8 @@ func (m *model) enterCommandWith(val string) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updatePalette() {
+	m.palette.ClearSyntaxHint()
+
 	var cmds []Command
 	if m.input.RawMode() {
 		cmds = rawCommands
@@ -398,7 +400,7 @@ func (m *model) updatePalette() {
 	}
 
 	cmd, ok := findCommand(cmds, cmdName)
-	if !ok || len(cmd.Args) == 0 {
+	if !ok {
 		m.palette.Hide()
 		m.resize()
 		return
@@ -407,30 +409,41 @@ func (m *model) updatePalette() {
 	// Determine which arg position we're editing.
 	// fields[0] is the command, fields[1..] are completed args.
 	// If the input ends with a space, we're starting a new arg.
-	argIdx := len(fields) - 1 // 0-based arg position
-	if strings.HasSuffix(val, " ") {
-		argIdx = len(fields) // next position
+	trailing := strings.HasSuffix(val, " ")
+	argIdx := len(fields) - 1
+	if trailing {
+		argIdx = len(fields)
 	}
 	argIdx-- // adjust: fields[0] is command, so arg 0 = fields[1]
-	if strings.HasSuffix(val, " ") {
+	if trailing {
 		argIdx = len(fields) - 1
 	}
 
-	if argIdx >= len(cmd.Args) {
-		m.palette.Hide()
+	// Set syntax hint if available.
+	if len(cmd.Syntax) > 0 {
+		syntaxIdx := argIdx
+		if syntaxIdx < 0 {
+			syntaxIdx = 0
+		}
+		m.palette.SetSyntaxHint(cmd.Name, cmd.Syntax, syntaxIdx)
+	}
+
+	if len(cmd.Args) == 0 || argIdx < 0 || argIdx >= len(cmd.Args) {
+		// No completable arg at this position — keep syntax visible if set.
+		m.palette.UpdateCompletions("", nil)
 		m.resize()
 		return
 	}
 
 	// Extract the partial text being typed for the current arg.
 	partial := ""
-	if !strings.HasSuffix(val, " ") && len(fields) > 1 {
+	if !trailing && len(fields) > 1 {
 		partial = fields[len(fields)-1]
 	}
 
 	candidates := m.completionsFor(cmd.Args[argIdx])
 	if candidates == nil {
-		m.palette.Hide()
+		m.palette.UpdateCompletions("", nil)
 		m.resize()
 		return
 	}
@@ -445,6 +458,7 @@ func (m *model) updateServicePalette(service string, fields []string, val string
 	cmds := serviceSubcommands[service]
 	trailing := strings.HasSuffix(val, " ")
 	pos := 1 // skip service name (fields[0])
+	var chain []string
 
 	for {
 		// At typing position → show/filter subcommand palette.
@@ -465,6 +479,7 @@ func (m *model) updateServicePalette(service string, fields []string, val string
 			m.resize()
 			return
 		}
+		chain = append(chain, cmd.Name)
 		pos++
 
 		// If matched command has subcommands, descend.
@@ -474,19 +489,13 @@ func (m *model) updateServicePalette(service string, fields []string, val string
 		}
 
 		// Leaf command → arg completion.
-		m.completeServiceArgs(cmd, fields, pos, trailing)
+		m.completeServiceArgs(cmd, fields, pos, trailing, strings.Join(chain, " "))
 		return
 	}
 }
 
 // completeServiceArgs handles argument completion for a leaf service subcommand.
-func (m *model) completeServiceArgs(cmd Command, fields []string, argStart int, trailing bool) {
-	if len(cmd.Args) == 0 {
-		m.palette.Hide()
-		m.resize()
-		return
-	}
-
+func (m *model) completeServiceArgs(cmd Command, fields []string, argStart int, trailing bool, chainPrefix string) {
 	argFields := len(fields) - argStart
 	var argIdx int
 	if trailing {
@@ -495,8 +504,25 @@ func (m *model) completeServiceArgs(cmd Command, fields []string, argStart int, 
 		argIdx = argFields - 1
 	}
 
+	// Set syntax hint if available.
+	if len(cmd.Syntax) > 0 {
+		syntaxIdx := argIdx
+		if syntaxIdx < 0 {
+			syntaxIdx = 0
+		}
+		m.palette.SetSyntaxHint(chainPrefix, cmd.Syntax, syntaxIdx)
+	}
+
+	if len(cmd.Args) == 0 {
+		// No completable args, but syntax hint may be showing.
+		m.palette.UpdateCompletions("", nil)
+		m.resize()
+		return
+	}
+
 	if argIdx < 0 || argIdx >= len(cmd.Args) {
-		m.palette.Hide()
+		// Past completable args — clear matches but keep syntax visible.
+		m.palette.UpdateCompletions("", nil)
 		m.resize()
 		return
 	}
@@ -508,7 +534,8 @@ func (m *model) completeServiceArgs(cmd Command, fields []string, argStart int, 
 
 	candidates := m.completionsFor(cmd.Args[argIdx])
 	if candidates == nil {
-		m.palette.Hide()
+		// No candidates for this arg type — clear matches but keep syntax.
+		m.palette.UpdateCompletions("", nil)
 		m.resize()
 		return
 	}

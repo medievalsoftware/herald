@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsServiceCommand(t *testing.T) {
 	tests := []struct {
@@ -212,6 +215,209 @@ func TestSubcommandChain(t *testing.T) {
 		}
 		if len(cmd.Subcommands) != 2 {
 			t.Fatalf("PUSH subcommands=%d, want 2", len(cmd.Subcommands))
+		}
+	})
+}
+
+func TestSyntaxHintRendering(t *testing.T) {
+	t.Run("SetSyntaxHint makes palette visible", func(t *testing.T) {
+		p := newPalette()
+		if p.visible {
+			t.Fatal("palette should start hidden")
+		}
+		p.SetSyntaxHint("PURGE ADD", []string{"<#channel:channel>", "[code:string]", "[reason:string]"}, 0)
+		if !p.visible {
+			t.Error("palette should be visible after SetSyntaxHint")
+		}
+		if !p.hasSyntaxHint() {
+			t.Error("hasSyntaxHint should return true")
+		}
+	})
+
+	t.Run("renderSyntax produces output", func(t *testing.T) {
+		p := newPalette()
+		p.SetSyntaxHint("PURGE ADD", []string{"<#channel:channel>", "[code:string]"}, 0)
+		out := p.renderSyntax(80)
+		if out == "" {
+			t.Fatal("renderSyntax should produce output")
+		}
+		if !strings.Contains(out, "PURGE ADD") {
+			t.Error("output should contain prefix")
+		}
+		if !strings.Contains(out, "<#channel:channel>") {
+			t.Error("output should contain first token")
+		}
+		if !strings.Contains(out, "[code:string]") {
+			t.Error("output should contain second token")
+		}
+	})
+
+	t.Run("ClearSyntaxHint resets state", func(t *testing.T) {
+		p := newPalette()
+		p.SetSyntaxHint("PURGE ADD", []string{"<#channel:channel>"}, 0)
+		p.ClearSyntaxHint()
+		if p.hasSyntaxHint() {
+			t.Error("hasSyntaxHint should be false after clear")
+		}
+		if p.syntaxPrefix != "" {
+			t.Error("syntaxPrefix should be empty")
+		}
+	})
+
+	t.Run("Height is 1 for syntax-only", func(t *testing.T) {
+		p := newPalette()
+		p.SetSyntaxHint("PURGE ADD", []string{"<#channel:channel>"}, 0)
+		h := p.Height(80)
+		if h != 1 {
+			t.Errorf("Height=%d, want 1 for syntax-only", h)
+		}
+	})
+
+	t.Run("View renders with syntax-only no matches", func(t *testing.T) {
+		p := newPalette()
+		p.SetSyntaxHint("CERT ADD", []string{"<fingerprint:string>"}, 0)
+		v := p.View(80)
+		if v == "" {
+			t.Fatal("View should produce output with syntax hint and no matches")
+		}
+	})
+
+	t.Run("argIdx clamped to last token", func(t *testing.T) {
+		p := newPalette()
+		p.SetSyntaxHint("PURGE ADD", []string{"<#channel:channel>", "[code:string]"}, 5)
+		if p.syntaxArgIdx != 1 {
+			t.Errorf("syntaxArgIdx=%d, want 1 (clamped)", p.syntaxArgIdx)
+		}
+	})
+}
+
+func TestSyntaxFieldOnCommands(t *testing.T) {
+	t.Run("PURGE ADD has 3 syntax tokens", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("CHANSERV", "PURGE")
+		if !ok {
+			t.Fatal("PURGE not found")
+		}
+		add, ok := findCommand(cmd.Subcommands, "ADD")
+		if !ok {
+			t.Fatal("ADD not found in PURGE subcommands")
+		}
+		if len(add.Syntax) != 3 {
+			t.Fatalf("PURGE ADD Syntax=%d tokens, want 3", len(add.Syntax))
+		}
+		if add.Syntax[0] != "<#channel:channel>" {
+			t.Errorf("token[0]=%q, want <#channel:channel>", add.Syntax[0])
+		}
+	})
+
+	t.Run("PUSH LIST has no syntax", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "PUSH")
+		if !ok {
+			t.Fatal("PUSH not found")
+		}
+		list, ok := findCommand(cmd.Subcommands, "LIST")
+		if !ok {
+			t.Fatal("LIST not found in PUSH subcommands")
+		}
+		if len(list.Syntax) != 0 {
+			t.Errorf("PUSH LIST Syntax=%v, want empty", list.Syntax)
+		}
+	})
+
+	t.Run("SUSPEND ADD has 3 syntax tokens", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "SUSPEND")
+		if !ok {
+			t.Fatal("SUSPEND not found")
+		}
+		add, ok := findCommand(cmd.Subcommands, "ADD")
+		if !ok {
+			t.Fatal("ADD not found in SUSPEND subcommands")
+		}
+		if len(add.Syntax) != 3 {
+			t.Fatalf("SUSPEND ADD Syntax=%d tokens, want 3", len(add.Syntax))
+		}
+	})
+
+	t.Run("PUSH DELETE has 1 syntax token", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "PUSH")
+		if !ok {
+			t.Fatal("PUSH not found")
+		}
+		del, ok := findCommand(cmd.Subcommands, "DELETE")
+		if !ok {
+			t.Fatal("DELETE not found in PUSH subcommands")
+		}
+		if len(del.Syntax) != 1 {
+			t.Fatalf("PUSH DELETE Syntax=%d tokens, want 1", len(del.Syntax))
+		}
+	})
+
+	t.Run("herald commands have syntax", func(t *testing.T) {
+		for _, cmd := range commands {
+			if cmd.Name == "quit" {
+				// quit has optional reason
+				if len(cmd.Syntax) != 1 {
+					t.Errorf("quit Syntax=%d, want 1", len(cmd.Syntax))
+				}
+				continue
+			}
+			if len(cmd.Syntax) == 0 {
+				t.Errorf("herald command %q missing Syntax", cmd.Name)
+			}
+		}
+	})
+
+	t.Run("raw commands with args have syntax", func(t *testing.T) {
+		for _, cmd := range rawCommands {
+			if len(cmd.Args) > 0 && len(cmd.Syntax) == 0 {
+				t.Errorf("raw command %q has Args but no Syntax", cmd.Name)
+			}
+		}
+	})
+
+	t.Run("raw commands without args but with syntax", func(t *testing.T) {
+		for _, name := range []string{"NICK", "QUIT", "OPER", "UBAN", "DLINE", "KLINE", "DEFCON", "CHATHISTORY"} {
+			cmd, ok := findCommand(rawCommands, name)
+			if !ok {
+				t.Errorf("raw command %q not found", name)
+				continue
+			}
+			if len(cmd.Syntax) == 0 {
+				t.Errorf("raw command %q should have Syntax", name)
+			}
+		}
+	})
+
+	t.Run("service commands without Args have syntax", func(t *testing.T) {
+		noArgWithSyntax := map[string][]string{
+			"NICKSERV": {"IDENTIFY", "REGISTER", "UNREGISTER", "PASSWD", "VERIFY", "SET", "GET", "LIST", "RENAME", "SAREGISTER", "SAVERIFY", "ERASE", "SAGET", "SASET", "SENDPASS", "RESETPASS"},
+			"HOSTSERV": {"STATUS", "SET", "DEL", "SETCLOAKSECRET"},
+			"HISTSERV": {"FORGET"},
+			"CHANSERV": {"LIST"},
+		}
+		for svc, names := range noArgWithSyntax {
+			for _, name := range names {
+				cmd, ok := findServiceSubcommand(svc, name)
+				if !ok {
+					t.Errorf("%s %s not found", svc, name)
+					continue
+				}
+				if len(cmd.Syntax) == 0 {
+					t.Errorf("%s %s should have Syntax", svc, name)
+				}
+			}
+		}
+	})
+
+	t.Run("NICKSERV IDENTIFY has 2 syntax tokens", func(t *testing.T) {
+		cmd, ok := findServiceSubcommand("NICKSERV", "IDENTIFY")
+		if !ok {
+			t.Fatal("IDENTIFY not found")
+		}
+		if len(cmd.Syntax) != 2 {
+			t.Fatalf("IDENTIFY Syntax=%d, want 2", len(cmd.Syntax))
+		}
+		if cmd.Syntax[0] != "<username:string>" {
+			t.Errorf("token[0]=%q, want <username:string>", cmd.Syntax[0])
 		}
 	})
 }
