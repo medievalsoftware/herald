@@ -425,7 +425,7 @@ func (m *model) updatePalette() {
 	fields := strings.Fields(val)
 
 	// No args yet — show command name completions.
-	if len(fields) <= 1 && !strings.HasSuffix(val, " ") {
+	if len(fields) == 0 || (len(fields) == 1 && !strings.HasSuffix(val, " ")) {
 		if m.input.RawMode() {
 			m.palette.UpdateRaw(val)
 		} else {

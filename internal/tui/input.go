@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -42,6 +44,19 @@ func newInput() inputModel {
 }
 
 func (m inputModel) Update(msg tea.Msg) (inputModel, tea.Cmd) {
+	// Workaround for charmbracelet/bubbles textarea bug: wordLeft/wordRight
+	// infinite loop when the textarea is empty or contains only whitespace.
+	// This can be triggered by broken terminal escape sequences being
+	// interpreted as alt+left/alt+b or alt+right/alt+f key messages.
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "alt+left", "alt+b", "alt+right", "alt+f":
+			if isEmptyOrWhitespace(m.textarea.Value()) {
+				return m, nil
+			}
+		}
+	}
+
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
 	m.syncHeight()
@@ -158,4 +173,9 @@ func (m *inputModel) Focused() bool {
 func (m *inputModel) SetValue(s string) {
 	m.textarea.SetValue(s)
 	m.textarea.CursorEnd()
+}
+
+// isEmptyOrWhitespace returns true if s is empty or contains only whitespace.
+func isEmptyOrWhitespace(s string) bool {
+	return strings.TrimSpace(s) == ""
 }
