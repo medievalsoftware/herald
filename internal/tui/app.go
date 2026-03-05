@@ -446,6 +446,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 		m.clearNotification()
 		m.input.SetCommandMode(false)
 		cmd := m.input.Focus()
+		m.resize()
 		return m, cmd
 
 	case ActionCommand:
@@ -453,6 +454,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 		m.input.SetCommandMode(true)
 		cmd := m.input.Focus()
 		m.updatePalette()
+		m.resize()
 		return m, cmd
 
 	case ActionCancel:
@@ -1435,12 +1437,12 @@ func (m *model) resize() {
 
 	topicHeight := 0
 	if tv := m.topicView(chatWidth); tv != "" {
-		topicHeight = lipgloss.Height(tv) + 1 // +1 for newline
+		topicHeight = lipgloss.Height(tv)
 	}
 
 	var middleHeight int
 	if m.notificationActive() {
-		notifyH := min(len(m.notifyLines), inputMaxHeight)
+		notifyH := lipgloss.Height(m.renderNotification(m.width))
 		middleHeight = m.height - channelsHeight - notifyH
 	} else {
 		inputHeight := m.input.LineCount()
