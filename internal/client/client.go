@@ -83,7 +83,7 @@ func (c *Client) Connect(ctx context.Context, addr, nick string) error {
 	}
 
 	c.dispatch(ConnectedMsg{})
-	go c.readLoop(ctx)
+	go c.readLoop(context.Background())
 	return nil
 }
 
@@ -264,6 +264,9 @@ func (c *Client) readMessage(ctx context.Context) (ircmsg.Message, error) {
 func (c *Client) Send(ctx context.Context, line string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.conn == nil {
+		return fmt.Errorf("not connected")
+	}
 	return c.conn.Write(ctx, websocket.MessageText, []byte(line))
 }
 
@@ -272,7 +275,9 @@ func (c *Client) Close() error {
 	if c.conn == nil {
 		return nil
 	}
-	return c.conn.Close(websocket.StatusNormalClosure, "bye")
+	err := c.conn.Close(websocket.StatusNormalClosure, "bye")
+	c.conn = nil
+	return err
 }
 
 // Nick returns the current nickname.
@@ -286,15 +291,11 @@ func (c *Client) SetNick(nick string) {
 }
 
 func (c *Client) readLoop(ctx context.Context) {
-	defer func() {
-		c.dispatch(DisconnectedMsg{})
-	}()
-
 	for {
 		_, data, err := c.conn.Read(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				return
+				return // intentional shutdown, no dispatch
 			}
 			c.dispatch(DisconnectedMsg{Err: err})
 			return

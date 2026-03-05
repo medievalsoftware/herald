@@ -40,6 +40,7 @@ var commands = []Command{
 	{Name: "set", Desc: "Change a setting", Args: []ArgType{ArgSetting}, Syntax: []string{"<setting:setting>", "[value:string]"}},
 	{Name: "theme", Desc: "Switch color theme", Args: []ArgType{ArgTheme}, Syntax: []string{"<name:theme>"}},
 	{Name: "topic", Desc: "Set or view channel topic", Syntax: []string{"[topic:string]"}},
+	{Name: "reconnect", Aliases: []string{"rc"}, Desc: "Reconnect to server"},
 }
 
 var rawCommands = []Command{

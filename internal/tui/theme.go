@@ -42,5 +42,9 @@ func ApplyTheme(t config.Theme) {
 
 	notifyStyle = notifyStyle.Foreground(lipgloss.Color(t.Accent))
 
+	overlayBoxStyle = overlayBoxStyle.
+		BorderForeground(lipgloss.Color(t.Accent)).
+		Foreground(lipgloss.Color(t.Accent))
+
 	format.SetNickColors(t.Nicks)
 }

@@ -16,9 +16,40 @@ import (
 
 const serverBuffer = "*server*"
 
+type connState int
+
+const (
+	stateConnected connState = iota
+	stateDisconnected
+	stateWaiting    // countdown to next attempt
+	stateConnecting // actively dialing
+)
+
+const (
+	minBackoff = 1 * time.Second
+	maxBackoff = 30 * time.Second
+)
+
+// reconnectTickMsg fires when the backoff timer expires.
+type reconnectTickMsg struct{}
+
+// countdownTickMsg fires every second to update the overlay countdown.
+type countdownTickMsg struct{}
+
+// reconnectResultMsg carries the result of a reconnect attempt.
+type reconnectResultMsg struct {
+	err error
+}
+
 var (
-	notifyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Italic(true).PaddingLeft(1)
-	topicBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("235")).Padding(0, 1)
+	notifyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Italic(true).PaddingLeft(1)
+	topicBarStyle   = lipgloss.NewStyle().Background(lipgloss.Color("235")).Padding(0, 1)
+	overlayBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("9")).
+			Foreground(lipgloss.Color("9")).
+			Padding(1, 3).
+			Align(lipgloss.Center)
 )
 
 // batchState tracks an in-progress IRCv3 BATCH.
@@ -64,6 +95,13 @@ type model struct {
 	notifyLines []string
 	// expectService is the IRC nick we expect NOTICE responses from (e.g. "NickServ").
 	expectService string
+
+	// Connection state machine for reconnect.
+	connState     connState
+	disconnectErr string        // human-readable disconnect reason
+	backoff       time.Duration // current backoff interval
+	reconnectAt   time.Time     // when the next reconnect attempt fires
+	program       *tea.Program  // stored for reconnect goroutines
 }
 
 // New creates a new TUI model wired to connect to the given server.
@@ -86,6 +124,7 @@ func New(addr, nick, pass string, cfg config.Config) *model {
 	}
 	m.input.nick = nick
 	m.chat.SetActive(serverBuffer)
+	m.connState = stateConnecting
 	return m
 }
 
@@ -105,7 +144,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case client.ConnectedMsg:
+		reconnecting := m.backoff > 0
+		m.connState = stateConnected
+		m.backoff = 0
+		m.disconnectErr = ""
 		m.chat.AddSystemMessage(serverBuffer, "Connected to "+m.addr)
+		if reconnecting {
+			return m, m.rejoinChannels()
+		}
 		return m, nil
 
 	case client.IRCMsg:
@@ -116,11 +162,45 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case client.DisconnectedMsg:
+		if m.quitting {
+			return m, nil
+		}
 		detail := "Disconnected"
 		if msg.Err != nil {
 			detail += ": " + msg.Err.Error()
+			m.disconnectErr = msg.Err.Error()
+		} else {
+			m.disconnectErr = "connection lost"
 		}
 		m.chat.AddSystemMessage(serverBuffer, detail)
+		m.connState = stateDisconnected
+		if m.backoff == 0 {
+			m.backoff = minBackoff
+		}
+		return m, m.scheduleReconnect()
+
+	case reconnectTickMsg:
+		if m.connState != stateWaiting {
+			return m, nil
+		}
+		m.connState = stateConnecting
+		return m, m.attemptReconnect()
+
+	case reconnectResultMsg:
+		if msg.err != nil {
+			m.disconnectErr = msg.err.Error()
+			m.backoff = min(m.backoff*2, maxBackoff)
+			m.connState = stateDisconnected
+			m.chat.AddSystemMessage(serverBuffer, "Reconnect failed: "+msg.err.Error())
+			return m, m.scheduleReconnect()
+		}
+		// ConnectedMsg will arrive from the client.
+		return m, nil
+
+	case countdownTickMsg:
+		if m.connState == stateWaiting {
+			return m, m.countdownTick()
+		}
 		return m, nil
 	}
 
@@ -145,6 +225,11 @@ func (m *model) View() string {
 	}
 	if m.width == 0 {
 		return "Connecting..."
+	}
+
+	// Overlay when disconnected.
+	if m.connState != stateConnected {
+		return m.renderOverlay()
 	}
 
 	chatWidth := m.width
@@ -178,6 +263,7 @@ func (m *model) View() string {
 }
 
 func (m *model) SetProgram(p *tea.Program) {
+	m.program = p
 	var opts []client.Option
 	if m.pass != "" {
 		opts = append(opts, client.WithPass(m.pass))
@@ -186,7 +272,7 @@ func (m *model) SetProgram(p *tea.Program) {
 	m.client = c
 	go func() {
 		if err := c.Connect(context.Background(), m.addr, m.nick); err != nil {
-			p.Send(client.ErrorMsg{Err: err})
+			p.Send(client.DisconnectedMsg{Err: err})
 		}
 	}()
 }
@@ -219,9 +305,70 @@ func (m *model) switchChannel(name string) {
 }
 
 // send is a fire-and-forget IRC send; errors are non-fatal in the TUI context.
+// Blocks sends when not connected, with user feedback.
 func (m *model) send(line string) {
+	if m.connState != stateConnected {
+		m.chat.AddSystemMessage(m.channels.Active(), "Not connected")
+		return
+	}
 	if m.client != nil {
 		_ = m.client.Send(context.Background(), line)
+	}
+}
+
+// scheduleReconnect sets stateWaiting and returns cmds for the backoff timer and countdown.
+func (m *model) scheduleReconnect() tea.Cmd {
+	m.connState = stateWaiting
+	m.reconnectAt = time.Now().Add(m.backoff)
+	backoff := m.backoff
+	return tea.Batch(
+		tea.Tick(backoff, func(time.Time) tea.Msg { return reconnectTickMsg{} }),
+		tea.Tick(time.Second, func(time.Time) tea.Msg { return countdownTickMsg{} }),
+	)
+}
+
+// countdownTick returns a 1-second tick command for the overlay countdown.
+func (m *model) countdownTick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return countdownTickMsg{} })
+}
+
+// attemptReconnect returns a tea.Cmd that tries to reconnect the client.
+func (m *model) attemptReconnect() tea.Cmd {
+	return func() tea.Msg {
+		if m.client != nil {
+			_ = m.client.Close()
+		}
+		var opts []client.Option
+		if m.pass != "" {
+			opts = append(opts, client.WithPass(m.pass))
+		}
+		c := client.New(func(msg any) { m.program.Send(msg) }, opts...)
+		m.client = c
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := c.Connect(ctx, m.addr, m.nick); err != nil {
+			return reconnectResultMsg{err: err}
+		}
+		return reconnectResultMsg{}
+	}
+}
+
+// rejoinChannels returns a tea.Cmd that sends JOIN for each channel tab.
+func (m *model) rejoinChannels() tea.Cmd {
+	var channels []string
+	for _, tab := range m.channels.Tabs() {
+		if tab != serverBuffer && isChannel(tab) {
+			channels = append(channels, tab)
+		}
+	}
+	if len(channels) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		for _, ch := range channels {
+			_ = m.client.Send(context.Background(), "JOIN "+ch)
+		}
+		return nil
 	}
 }
 
@@ -708,6 +855,38 @@ func (m *model) notificationActive() bool {
 	return len(m.notifyLines) > 0 && m.channels.Active() != serverBuffer && !m.input.Focused()
 }
 
+// renderOverlay renders a centered floating overlay showing connection state.
+func (m *model) renderOverlay() string {
+	var title, body string
+	switch m.connState {
+	case stateDisconnected:
+		title = "Disconnected"
+		body = m.disconnectErr
+	case stateWaiting:
+		remaining := time.Until(m.reconnectAt).Truncate(time.Second)
+		if remaining < 0 {
+			remaining = 0
+		}
+		title = fmt.Sprintf("Reconnecting in %s...", remaining)
+		body = m.disconnectErr
+	case stateConnecting:
+		if m.backoff > 0 {
+			title = "Reconnecting..."
+		} else {
+			title = "Connecting..."
+		}
+		body = m.disconnectErr
+	}
+
+	content := title
+	if body != "" {
+		content += "\n" + body
+	}
+
+	box := overlayBoxStyle.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
 // renderNotification renders the service response notification for the input area.
 func (m *model) renderNotification(width int) string {
 	lines := m.notifyLines
@@ -836,8 +1015,8 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		if args != "" {
 			quitMsg = args
 		}
-		m.send("QUIT :" + quitMsg)
 		if m.client != nil {
+			_ = m.client.Send(context.Background(), "QUIT :"+quitMsg)
 			_ = m.client.Close()
 		}
 		return m, tea.Quit
@@ -920,6 +1099,16 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.send("TOPIC " + target + " :" + args)
+
+	case "RECONNECT":
+		if m.connState == stateConnected {
+			m.chat.AddSystemMessage(m.channels.Active(), "Already connected")
+			return m, nil
+		}
+		m.backoff = minBackoff
+		m.connState = stateConnecting
+		m.chat.AddSystemMessage(serverBuffer, "Reconnecting...")
+		return m, m.attemptReconnect()
 
 	case "TEST_HISTORY":
 		m.testHistory()

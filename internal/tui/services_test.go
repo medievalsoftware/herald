@@ -352,7 +352,12 @@ func TestSyntaxFieldOnCommands(t *testing.T) {
 	})
 
 	t.Run("herald commands have syntax", func(t *testing.T) {
+		// Commands with no parameters don't need syntax hints.
+		noSyntax := map[string]bool{"reconnect": true}
 		for _, cmd := range commands {
+			if noSyntax[cmd.Name] {
+				continue
+			}
 			if cmd.Name == "quit" {
 				// quit has optional reason
 				if len(cmd.Syntax) != 1 {
