@@ -50,6 +50,7 @@ var (
 			Foreground(lipgloss.Color("9")).
 			Padding(1, 3).
 			Align(lipgloss.Center)
+	replyIndicatorStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("14")).PaddingLeft(1)
 )
 
 // batchState tracks an in-progress IRCv3 BATCH.
@@ -70,6 +71,7 @@ type model struct {
 	input    inputModel
 	users    usersModel
 	palette  paletteModel
+	picker   pickerModel
 	keymap   KeyMap
 	width    int
 	height   int
@@ -96,6 +98,10 @@ type model struct {
 	// expectService is the IRC nick we expect NOTICE responses from (e.g. "NickServ").
 	expectService string
 
+	// replyMsgid is set when the user is composing a reply to a specific message.
+	// Cleared after sending. sendChat attaches +draft/reply tag when set.
+	replyMsgid string
+
 	// Connection state machine for reconnect.
 	connState     connState
 	disconnectErr string        // human-readable disconnect reason
@@ -117,6 +123,7 @@ func New(addr, nick, pass string, cfg config.Config) *model {
 		input:       newInput(),
 		users:       newUsers(cfg.UsersWidth),
 		palette:     newPalette(),
+		picker:      newPicker(),
 		keymap:      km,
 		namesBuffer: make(map[string][]string),
 		topics:      make(map[string]string),
@@ -227,6 +234,11 @@ func (m *model) View() string {
 		return "Connecting..."
 	}
 
+	// Picker modal takes over the full screen.
+	if m.picker.visible {
+		return m.picker.View(m.config.Timestamp)
+	}
+
 	// Overlay when disconnected.
 	if m.connState != stateConnected {
 		return m.renderOverlay()
@@ -256,6 +268,9 @@ func (m *model) View() string {
 	} else {
 		if pv := m.palette.View(m.width); pv != "" {
 			result += pv + "\n"
+		}
+		if m.replyMsgid != "" {
+			result += replyIndicatorStyle.Render(" replying to "+m.replyMsgid) + "\n"
 		}
 		result += m.input.View(m.width)
 	}
@@ -386,6 +401,11 @@ func (m *model) sendRawWithNotify(text string) {
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	keyStr := msg.String()
 
+	// Picker mode intercepts all keys.
+	if m.picker.visible {
+		return m.handlePickerKey(msg)
+	}
+
 	if m.input.Focused() {
 		// Insert mode.
 
@@ -459,6 +479,7 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 
 	case ActionCancel:
 		m.clearNotification()
+		m.replyMsgid = ""
 		m.input.Reset()
 		m.input.Blur()
 		m.palette.Hide()
@@ -540,6 +561,9 @@ func (m *model) executeAction(action Action) (tea.Model, tea.Cmd) {
 		cmd := m.input.Focus()
 		m.updatePalette()
 		return m, cmd
+
+	case ActionPicker:
+		return m.openPicker()
 	}
 
 	return m, nil
@@ -933,9 +957,13 @@ func (m *model) sendChat(text string) (tea.Model, tea.Cmd) {
 		if line == "" {
 			continue
 		}
-		m.send("PRIVMSG " + target + " :" + line)
-		m.chat.AddMessage(target, m.nick, line)
-
+		if m.replyMsgid != "" {
+			m.send("@+draft/reply=" + m.replyMsgid + " PRIVMSG " + target + " :" + line)
+			m.replyMsgid = ""
+		} else {
+			m.send("PRIVMSG " + target + " :" + line)
+		}
+		m.chat.AddMessage(target, m.nick, line, "")
 	}
 	return m, nil
 }
@@ -986,7 +1014,7 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 		m.send("PRIVMSG " + target + " :" + msgParts[1])
 		m.channels.Add(target)
 		m.switchChannel(m.channels.SetActive(target))
-		m.chat.AddMessage(target, m.nick, msgParts[1])
+		m.chat.AddMessage(target, m.nick, msgParts[1], "")
 
 	case "OPEN":
 		if args == "" {
@@ -1002,7 +1030,7 @@ func (m *model) handleCommand(text string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.send("PRIVMSG " + target + " :\x01ACTION " + args + "\x01")
-		m.chat.AddAction(target, m.nick, args)
+		m.chat.AddAction(target, m.nick, args, "")
 
 	case "NICK":
 		if args == "" {
@@ -1182,6 +1210,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		target := msg.Params[0]
 		text := msg.Params[1]
 		nick := parseNick(msg.Nick())
+		_, msgid := msg.GetTag("msgid")
 
 		// Skip own messages — already displayed by the send path.
 		if strings.EqualFold(nick, m.nick) {
@@ -1197,7 +1226,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			}
 			m.channels.Add(target)
 			stripped := format.Strip(action)
-			m.chat.AddAction(target, nick, stripped)
+			m.chat.AddAction(target, nick, stripped, msgid)
 			if target != m.channels.Active() {
 				m.channels.MarkActivity(target)
 			}
@@ -1210,7 +1239,7 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 		}
 		m.channels.Add(target)
 		stripped := format.Strip(text)
-		m.chat.AddMessage(target, nick, stripped)
+		m.chat.AddMessage(target, nick, stripped, msgid)
 		if target != m.channels.Active() {
 			m.channels.MarkActivity(target)
 		}
@@ -1423,7 +1452,116 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openPicker opens the message picker for the active channel.
+func (m *model) openPicker() (tea.Model, tea.Cmd) {
+	channel := m.channels.Active()
+	lines := m.chat.messages[channel]
+	if len(lines) == 0 {
+		return m, nil
+	}
+	// Blur main input if focused.
+	if m.input.Focused() {
+		m.input.Blur()
+	}
+	m.palette.Hide()
+	cmd := m.picker.Open(channel, lines, m.width, m.height)
+	return m, cmd
+}
+
+// handlePickerKey processes key events while the picker is visible.
+func (m *model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Action menu is open — handle menu keys.
+	if m.picker.showMenu {
+		return m.handlePickerMenu(msg)
+	}
+
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.picker.Close()
+		return m, nil
+	case "up":
+		m.picker.CursorUp()
+		return m, nil
+	case "down":
+		m.picker.CursorDown()
+		return m, nil
+	case "pgup":
+		m.picker.PageUp()
+		return m, nil
+	case "pgdown":
+		m.picker.PageDown()
+		return m, nil
+	case "enter":
+		if !m.picker.OpenMenu() {
+			// No msgid — just close.
+			m.picker.Close()
+		}
+		return m, nil
+	default:
+		cmd := m.picker.Update(msg)
+		return m, cmd
+	}
+}
+
+// handlePickerMenu processes key events for the action menu overlay.
+func (m *model) handlePickerMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.picker.CloseMenu()
+		return m, nil
+	case "up", "shift+tab":
+		m.picker.MenuUp()
+		return m, nil
+	case "down", "tab":
+		m.picker.MenuDown()
+		return m, nil
+	case "enter":
+		result, ok := m.picker.MenuSelect()
+		if !ok {
+			m.picker.Close()
+			return m, nil
+		}
+		m.picker.Close()
+		return m.executePickerAction(result)
+	}
+	return m, nil
+}
+
+// executePickerAction performs the chosen action from the picker menu.
+func (m *model) executePickerAction(r pickerResult) (tea.Model, tea.Cmd) {
+	switch r.action {
+	case pickerActionReply:
+		m.replyMsgid = r.msgid
+		m.input.SetMode(modeChat)
+		cmd := m.input.Focus()
+		m.resize()
+		return m, cmd
+
+	case pickerActionReact:
+		m.input.SetMode(modeRaw)
+		cmd := m.input.Focus()
+		m.input.SetValue("@+draft/reply=" + r.msgid + ";+draft/react= TAGMSG " + r.channel)
+		// Place cursor before " TAGMSG" so user can type the emoji.
+		// SetValue places cursor at end; we need to position after the "=" of react.
+		return m, cmd
+
+	case pickerActionDelete:
+		m.input.SetMode(modeRaw)
+		cmd := m.input.Focus()
+		m.input.SetValue("HISTSERV DELETE " + r.channel + " " + r.msgid)
+		return m, cmd
+
+	case pickerActionCopy:
+		m.chat.AddSystemMessage(m.channels.Active(), "msgid: "+r.msgid)
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m *model) resize() {
+	if m.picker.visible {
+		m.picker.SetSize(m.width, m.height)
+	}
 	m.input.SetWidth(m.width)
 	channelsHeight := 2 // tab bar + border
 
@@ -1447,7 +1585,11 @@ func (m *model) resize() {
 	} else {
 		inputHeight := m.input.LineCount()
 		paletteHeight := m.palette.Height(m.width)
-		middleHeight = m.height - channelsHeight - inputHeight - paletteHeight
+		replyHeight := 0
+		if m.replyMsgid != "" {
+			replyHeight = 1
+		}
+		middleHeight = m.height - channelsHeight - inputHeight - paletteHeight - replyHeight
 	}
 
 	chatHeight := middleHeight - topicHeight
@@ -1576,6 +1718,7 @@ func (m *model) finalizeChatHistory(batch *batchState) {
 	for _, msg := range batch.messages {
 		nick := parseNick(msg.Nick())
 		t := parseServerTime(msg)
+		_, msgid := msg.GetTag("msgid")
 
 		switch msg.Command {
 		case "PRIVMSG":
@@ -1587,11 +1730,11 @@ func (m *model) finalizeChatHistory(batch *batchState) {
 			// CTCP ACTION.
 			if strings.HasPrefix(text, "\x01ACTION ") && strings.HasSuffix(text, "\x01") {
 				content := format.Strip(text[8 : len(text)-1])
-				lines = append(lines, chatLine{nick: nick, content: content, time: t, action: true})
+				lines = append(lines, chatLine{nick: nick, content: content, time: t, msgid: msgid, action: true})
 				continue
 			}
 
-			lines = append(lines, chatLine{nick: nick, content: format.Strip(text), time: t})
+			lines = append(lines, chatLine{nick: nick, content: format.Strip(text), time: t, msgid: msgid})
 
 		case "NOTICE":
 			if len(msg.Params) < 2 {

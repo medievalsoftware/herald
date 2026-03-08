@@ -31,6 +31,7 @@ const (
 	ActionSet         Action = "set"
 	ActionIRCQuit     Action = "irc_quit"
 	ActionRawMode     Action = "raw_mode"
+	ActionPicker      Action = "picker"
 )
 
 // KeyMap holds resolved key bindings for all modes.
@@ -53,6 +54,8 @@ func DefaultKeyMap() KeyMap {
 			"\"":        ActionRawMode,
 			"pgup":      ActionScrollUp,
 			"pgdown":    ActionScrollDown,
+			"ctrl+f":    ActionPicker,
+			"/":         ActionPicker,
 		},
 		Insert: map[string]Action{
 			"ctrl+c":    ActionCancel,

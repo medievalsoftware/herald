@@ -12,7 +12,7 @@ import (
 )
 
 // desiredCaps lists the IRCv3 capabilities Herald will request.
-var desiredCaps = []string{"batch", "server-time", "chathistory", "draft/chathistory"}
+var desiredCaps = []string{"batch", "server-time", "message-tags", "chathistory", "draft/chathistory"}
 
 // Client manages a WebSocket connection to an IRC server.
 type Client struct {

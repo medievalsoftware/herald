@@ -15,8 +15,9 @@ type chatLine struct {
 	nick    string
 	content string
 	time    time.Time
-	action  bool // true for /me actions
-	system  bool // true for join/part/quit/etc
+	msgid   string // IRC msgid tag, if present
+	action  bool   // true for /me actions
+	system  bool   // true for join/part/quit/etc
 }
 
 type chatModel struct {
@@ -51,11 +52,12 @@ func (m chatModel) View() string {
 }
 
 // AddMessage appends a message to a channel buffer.
-func (m *chatModel) AddMessage(channel, nick, content string) {
+func (m *chatModel) AddMessage(channel, nick, content, msgid string) {
 	m.messages[channel] = append(m.messages[channel], chatLine{
 		nick:    nick,
 		content: content,
 		time:    time.Now(),
+		msgid:   msgid,
 	})
 	if channel == m.active {
 		m.refreshViewport()
@@ -63,11 +65,12 @@ func (m *chatModel) AddMessage(channel, nick, content string) {
 }
 
 // AddAction appends an action (/me) to a channel buffer.
-func (m *chatModel) AddAction(channel, nick, content string) {
+func (m *chatModel) AddAction(channel, nick, content, msgid string) {
 	m.messages[channel] = append(m.messages[channel], chatLine{
 		nick:    nick,
 		content: content,
 		time:    time.Now(),
+		msgid:   msgid,
 		action:  true,
 	})
 	if channel == m.active {
