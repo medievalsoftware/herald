@@ -1244,6 +1244,15 @@ func (m *model) handleIRC(msg client.IRCMsg) (tea.Model, tea.Cmd) {
 			m.channels.MarkActivity(target)
 		}
 
+	case "REDACT":
+		// REDACT #channel <target-msgid> [:reason]
+		if len(msg.Params) < 2 {
+			return m, nil
+		}
+		channel := msg.Params[0]
+		targetMsgid := msg.Params[1]
+		m.chat.RedactMessage(channel, targetMsgid)
+
 	case "NOTICE":
 		if len(msg.Params) < 2 {
 			return m, nil

@@ -98,6 +98,21 @@ func (m *chatModel) PrependMessages(channel string, lines []chatLine) {
 	}
 }
 
+// RedactMessage removes a message by msgid from a channel buffer.
+func (m *chatModel) RedactMessage(channel, msgid string) bool {
+	lines := m.messages[channel]
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i].msgid == msgid {
+			m.messages[channel] = append(lines[:i], lines[i+1:]...)
+			if channel == m.active {
+				m.refreshViewport()
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // SetActive switches the displayed channel.
 func (m *chatModel) SetActive(channel string) {
 	m.active = channel
